@@ -1,0 +1,43 @@
+# Environment
+.env
+.envrc
+.venv/
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+build/
+dist/
+site/
+
+# Local databases and logs
+*.db
+db.sqlite3
+db.sqlite3-journal
+*.log
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+tempCodeRunnerFile.py
