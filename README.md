@@ -1,45 +1,64 @@
-# JIO Healthlab
+# 🏥 JIO Healthlab
 
-An agentic full end-to-end diagnostics report system rebuilt from the original single-file FastAPI demo.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![React](https://img.shields.io/badge/react-18.x-cyan)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green)
+![MySQL](https://img.shields.io/badge/MySQL-8.0-orange)
+![Docker](https://img.shields.io/badge/docker-compose-blue)
 
-## What changed
+**JIO Healthlab** is a modern, end-to-end laboratory diagnostics reporting system and management dashboard. Built with a high-performance **FastAPI** backend and a responsive **React/Vite** frontend, it helps lab administrators track urgent tests, patient details, branch loads, and diagnostic queues in real time.
 
-- FastAPI backend with SQLAlchemy models instead of in-memory dictionaries.
-- MySQL database support via `DATABASE_URL`.
-- Alembic migration for the first production schema.
-- Expanded report fields: status, priority, branch, city, doctor, contact details, due times, and notes.
-- Dashboard API for totals, urgent work, status mix, test demand, city load, due-soon queue, and recent reports.
-- React + Vite frontend with a creative lab operations dashboard.
-- Docker Compose setup for local MySQL/API/frontend.
-- AWS EC2 + RDS deployment guide.
+---
 
-## Local Docker Run
+## ✨ Key Features
 
-1. Copy the environment sample:
+- **Real-Time Dashboard**: Monitor totals, urgent work, status mix, test demand, and city-level loads.
+- **Advanced Filtering & Sorting**: Track patient details, contact info, due dates, and specific tests.
+- **Scalable Backend**: Built with FastAPI, backed by a robust MySQL database using SQLAlchemy and Alembic for migrations.
+- **Production Ready**: Fully containerized using Docker and Docker Compose with Nginx reverse proxying.
+- **1-Click AWS Deployment**: Includes automated bash scripts and Docker configs designed to run perfectly within the **AWS Free Tier** (t2.micro/t3.micro).
 
-   ```powershell
-   Copy-Item .env.example .env
+---
+
+## 🏗️ Architecture Stack
+
+- **Frontend**: React 18, Vite, TypeScript, TailwindCSS (optional), Lucide Icons
+- **Backend**: FastAPI, Python 3.12, Uvicorn, Pydantic
+- **Database**: MySQL 8.x, SQLAlchemy (ORM), Alembic (Migrations)
+- **Deployment**: Docker, Docker Compose, Nginx
+
+---
+
+## 🚀 Quick Start (Local Docker)
+
+The easiest way to run the project locally is via Docker.
+
+1. **Clone the repo & copy environment variables**:
+   ```bash
+   git clone https://github.com/mohit6603/jio-healthlab.git
+   cd jio-healthlab
+   cp .env.example .env
    ```
 
-2. Start the stack:
-
-   ```powershell
+2. **Start the application**:
+   ```bash
    docker compose up --build
    ```
 
-3. Open:
+3. **Access the Application**:
+   - 🌐 **Dashboard (Frontend)**: [http://localhost](http://localhost)
+   - 📚 **API Swagger Docs**: [http://localhost/docs](http://localhost/docs)
+   - 💚 **Backend Health Check**: [http://localhost/health](http://localhost/health)
 
-   - Frontend: http://localhost
-   - API docs: http://localhost/docs
-   - Backend health: http://localhost/health
+*(The backend container will automatically run database migrations and seed the database with demo data.)*
 
-The backend container runs `alembic upgrade head`, seeds demo reports, then starts Uvicorn.
+---
 
-## Local Development
+## 🛠️ Local Development (Without Docker)
 
-Backend:
-
-```powershell
+### Backend Setup
+```bash
 cd backend
 pip install -r requirements.txt
 alembic upgrade head
@@ -47,63 +66,61 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-Frontend:
-
-```powershell
+### Frontend Setup
+```bash
 cd frontend
 npm install
 npm run dev
 ```
+*(The Vite dev server will automatically proxy API requests to the backend at `localhost:8000`.)*
 
-The Vite dev server proxies `/api`, `/docs`, `/health`, and `/openapi.json` to `localhost:8000`.
+---
 
-## Database
+## ☁️ Deployment (AWS Free Tier)
 
-The default local Docker URL is:
+JIO Healthlab is designed to be easily deployed to AWS EC2 using Docker, completely within the Free Tier limits.
+
+### Automated Deployment
+We have provided a fully automated setup script for Ubuntu EC2 instances:
+```bash
+# On your EC2 Instance
+git clone https://github.com/mohit6603/jio-healthlab.git
+cd jio-healthlab
+chmod +x deploy/aws-free-tier-setup.sh
+./deploy/aws-free-tier-setup.sh
+```
+
+For detailed manual instructions (including setting up AWS RDS), check the deployment guide:
+📖 **[AWS Deployment Guide](./deploy/aws-ec2-rds.md)**
+
+---
+
+## 📂 Project Structure
 
 ```text
-mysql+pymysql://healthlab:healthlab@mysql:3306/jio_healthlab
+jio-healthlab/
+├── backend/
+│   ├── app/
+│   │   ├── main.py          # FastAPI application & routes
+│   │   ├── models.py        # SQLAlchemy database models
+│   │   ├── schemas.py       # Pydantic validation schemas
+│   │   ├── database.py      # DB engine and session configuration
+│   │   └── seed.py          # Script to populate demo data
+│   ├── alembic/             # Database migration scripts
+│   └── requirements.txt     # Python dependencies
+├── frontend/
+│   ├── src/                 # React components and views
+│   │   ├── App.tsx          # Main Dashboard
+│   │   └── api.ts           # API client configuration
+│   ├── vite.config.ts       # Vite proxy setup
+│   └── package.json         # Node.js dependencies
+├── deploy/
+│   ├── aws-ec2-rds.md       # AWS Documentation
+│   └── aws-free-tier-setup.sh # Automated setup script
+├── docker-compose.yml       # Local development stack
+├── docker-compose.prod.yml  # Production deployment stack
+└── .env.example             # Environment variables template
 ```
 
-For a local backend outside Docker, use a host reachable from your machine, for example:
-
-```text
-mysql+pymysql://healthlab:healthlab@localhost:3306/jio_healthlab
-```
-
-Run migrations manually with:
-
-```powershell
-cd backend
-alembic upgrade head
-```
-
-Create a new migration after model changes with:
-
-```powershell
-cd backend
-alembic revision --autogenerate -m "describe change"
-```
-
-## Project Layout
-
-```text
-backend/
-  app/
-    main.py          FastAPI routes
-    models.py        SQLAlchemy models
-    schemas.py       Pydantic request/response models
-    database.py      DB engine/session
-    seed.py          demo data loader
-  alembic/           migration environment
-frontend/
-  src/
-    App.tsx          React dashboard
-    api.ts           API client
-deploy/
-  aws-ec2-rds.md     AWS live hosting guide
-```
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
