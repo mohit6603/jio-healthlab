@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 def build_engine(database_url: str | None = None):
     settings = get_settings()
     return create_engine(
-        database_url or settings.database_url,
+        database_url or settings.effective_database_url,
         pool_pre_ping=True,
         future=True,
     )

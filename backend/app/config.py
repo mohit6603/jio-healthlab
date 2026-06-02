@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
+    def effective_database_url(self) -> str:
+        """Handle Render's postgres:// scheme (needs postgresql://)."""
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url
+
+    @property
     def cors_origins(self) -> list[str]:
         return [
             origin.strip()
