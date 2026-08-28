@@ -1,0 +1,146 @@
+name: Deploy
+
+# Manual by default. Automatic deployment on every push to main is a choice
+# this project has not made: there is no staging environment to catch a bad
+# build first.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: production
+        type: choice
+        options: [production]
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for OIDC. No long-lived AWS keys are stored in this repository.
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+
+jobs:
+  # Never ship a build the test suite has not passed.
+  verify:
+    name: Verify
+    uses: ./.github/workflows/ci.yml
+
+  build-and-push:
+    name: Build and push images
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: frontend
+            context: ./frontend
+          - name: ai-service
+            context: ./ai-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # OIDC: GitHub exchanges a short-lived token for a role. No
+          # AWS_SECRET_ACCESS_KEY is stored anywhere.
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # Tagged with the commit SHA so a deployment is traceable to source,
+          # and with latest so the compose file needs no edit to roll forward.
+          tags: |
+            ${{ env.ECR_REGISTRY }}/jio-healthlab-${{ matrix.name }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/jio-healthlab-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll out via SSM
+        # Systems Manager rather than SSH: no inbound port 22, no deploy key
+        # in this repository, and the command is recorded in CloudTrail.
+        run: |
+          command_id=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${{ github.sha }}" \
+            --parameters commands='[
+              "set -euo pipefail",
+              "cd /opt/jio-healthlab",
+              "git fetch --all --tags && git checkout ${{ github.sha }}",
+              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}",
+              "docker compose -f docker-compose.yml -f docker-compose.prod.yml pull",
+              "docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans",
+              "docker image prune -f"
+            ]' \
+            --query "Command.CommandId" --output text)
+
+          echo "SSM command: $command_id"
+          aws ssm wait command-executed \
+            --command-id "$command_id" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" || true
+
+          status=$(aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query "Status" --output text)
+
+          aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query "StandardOutputContent" --output text
+
+          if [ "$status" != "Success" ]; then
+            aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+              --query "StandardErrorContent" --output text >&2
+            exit 1
+          fi
+
+      - name: Smoke test the deployment
+        # A green deploy that serves errors is not a green deploy.
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS "${{ vars.PUBLIC_URL }}/health" | grep -q '"status":"ok"'; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check never passed" >&2
+          exit 1

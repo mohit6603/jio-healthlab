@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Callable, so a deployment can require the same checks rather than
+  # duplicating them.
+  workflow_call:
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default; nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy app
+
+      - name: Test
+        # The suite runs on in-memory SQLite: no MySQL service needed, and the
+        # AI service is mocked with respx, so CI never touches a model.
+        run: pytest --cov=app --cov-report=term-missing
+
+      - name: Audit dependencies
+        # Fails the build on a known high-severity advisory. Run here rather
+        # than only locally, because a transitive dependency can become
+        # vulnerable without this repository changing at all.
+        run: |
+          pip install pip-audit
+          pip-audit --strict --progress-spinner off
+
+      - name: Verify migrations apply and match the models
+        env:
+          DATABASE_URL: sqlite:///./ci-check.db
+        run: |
+          alembic upgrade head
+          # Fails if the models have drifted from the migration chain.
+          alembic check
+          alembic downgrade base
+
+  ai-service:
+    name: AI service
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-service/requirements-lite.txt
+
+      - name: Install lightweight dependencies
+        # Deliberately not requirements.txt: torch, transformers and
+        # sentence-transformers are ~2 GB and no unit test needs them. Their
+        # absence also exercises the graceful-degradation paths.
+        run: pip install -r requirements-lite.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy app
+
+      - name: Test
+        # Integration tests needing a live Qdrant or real weights are marked
+        # and deselected here; they run in the integration job below.
+        run: pytest -m "not integration" --cov=app --cov-report=term-missing
+
+      - name: Audit dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --strict --progress-spinner off
+
+  ai-service-integration:
+    name: AI service (Qdrant integration)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    services:
+      qdrant:
+        # Kept in lockstep with the client pin in requirements.txt.
+        image: qdrant/qdrant:v1.19.0
+        ports:
+          - 6333:6333
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-service/requirements-lite.txt
+
+      - name: Install lightweight dependencies
+        run: pip install -r requirements-lite.txt
+
+      - name: Wait for Qdrant
+        run: |
+          for _ in $(seq 1 30); do
+            curl -fsS http://localhost:6333/readyz && exit 0
+            sleep 2
+          done
+          echo "Qdrant did not become ready" >&2
+          exit 1
+
+      - name: Vector store integration tests
+        env:
+          QDRANT_TEST_URL: http://localhost:6333
+        # Only the Qdrant tests: the model integration tests need weights,
+        # which CI must not download.
+        run: pytest -m integration tests/test_vector_store_integration.py
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        # A high-severity advisory in a build tool still ships to developers.
+        run: npm audit --audit-level=high
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Validate compose files
+        env:
+          DATABASE_URL: mysql+pymysql://u:p@db:3306/x
+          JWT_SECRET_KEY: ci-placeholder-secret-long-enough-for-hs256
+          SEED_ADMIN_PASSWORD: ci-placeholder-password
+          BACKEND_CORS_ORIGINS: https://example.com
+          QDRANT_URL: https://example.qdrant.io
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Build AI service image
+        # The largest image by far; the layer cache is what keeps this
+        # tolerable on a pull request.
+        uses: docker/build-push-action@v6
+        with:
+          context: ./ai-service
+          push: false
+          cache-from: type=gha,scope=ai-service
+          cache-to: type=gha,mode=max,scope=ai-service

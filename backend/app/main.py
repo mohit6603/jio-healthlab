@@ -16,7 +16,7 @@ from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
 from .core.logging import configure_logging, get_logger
 from .core.middleware import RequestContextMiddleware
-from .routers import ai, audit, auth, dashboard, reports, system
+from .routers import ai, audit, auth, dashboard, metrics, reports, system
 from .routers.system import APP_VERSION
 from .services.ai_client import close_ai_client
 
@@ -107,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(ai.router)
     app.include_router(audit.router)
+    app.include_router(metrics.router)
 
     return app
 
