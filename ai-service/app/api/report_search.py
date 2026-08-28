@@ -130,6 +130,9 @@ def delete_report(
     "/index/stats",
     response_model=ReportIndexStats,
     summary="Report index size",
+    description="How many reports are currently searchable, and in which "
+    "collection. `exists: false` means nothing has been indexed yet -- run "
+    "`POST /api/ai/report-index` on the backend.",
 )
 def index_stats(
     settings: SettingsDep, store: VectorStoreDep, embedder: EmbedderDep

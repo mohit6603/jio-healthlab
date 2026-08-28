@@ -34,6 +34,8 @@ router = APIRouter(prefix="/api", tags=["Reports"])
     response_model=list[str],
     dependencies=[Requires(Permission.REPORTS_READ)],
     summary="List the test catalogue",
+    description="Every test the laboratory offers. Used to populate filter "
+    "and intake dropdowns so the client and server agree on the vocabulary.",
 )
 def get_test_types() -> list[str]:
     return report_service.list_test_types()
@@ -75,6 +77,8 @@ def list_reports(
     responses=NOT_FOUND_RESPONSE,
     dependencies=[Requires(Permission.REPORTS_READ)],
     summary="Fetch one report",
+    description="Returns the full record, including patient details. Contrast "
+    "with `/api/ai/*`, which only ever sees a sanitised summary.",
 )
 def get_report(report_id: int, db: DbSession) -> Report:
     return report_service.get_report(db, report_id)
@@ -86,6 +90,8 @@ def get_report(report_id: int, db: DbSession) -> Report:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Requires(Permission.REPORTS_CREATE)],
     summary="Create a report",
+    description="Registers a new diagnostic request. Blank strings are stored "
+    "as null. Recorded in the audit trail against the creating user.",
 )
 def create_report(
     payload: ReportCreate, db: DbSession, user: CurrentUser
@@ -133,6 +139,9 @@ def update_report(
     responses=NOT_FOUND_RESPONSE,
     dependencies=[Requires(Permission.REPORTS_DELETE)],
     summary="Delete a report",
+    description="Permanently removes the report. Administrators only, and "
+    "recorded in the audit trail. The semantic index may briefly retain a "
+    "stale entry; search drops hits whose report no longer exists.",
 )
 def delete_report(report_id: int, db: DbSession, user: CurrentUser) -> None:
     report_service.delete_report(db, report_id)

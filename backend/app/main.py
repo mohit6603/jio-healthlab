@@ -54,9 +54,24 @@ OPENAPI_TAGS = [
     {
         "name": "AI",
         "description": (
-            "Knowledge assistant and semantic search, proxied to the "
-            "internal AI service. AI output is informational only and is "
-            "not a medical diagnosis."
+            "Knowledge assistant, semantic search, report explanation and "
+            "delay-risk analytics, proxied to the internal AI service. AI "
+            "output is informational only and is **not** a medical diagnosis."
+        ),
+    },
+    {
+        "name": "Audit",
+        "description": (
+            "Append-only record of who did what, and metadata about AI usage. "
+            "No question, answer or patient identifier is stored. "
+            "Administrators only."
+        ),
+    },
+    {
+        "name": "Metrics",
+        "description": (
+            "Prometheus exposition of operational counters, computed from the "
+            "audit tables. Administrators only."
         ),
     },
 ]
