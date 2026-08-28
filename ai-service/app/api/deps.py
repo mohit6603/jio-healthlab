@@ -6,6 +6,7 @@ from fastapi import Depends
 
 from ..config import Settings, get_settings
 from ..llm import LLMProvider, get_llm_provider
+from ..ml.predictor import DelayPredictor, get_delay_predictor
 from ..rag.embeddings import SentenceTransformerEmbedder, get_embedder
 from ..rag.vector_store import VectorStore, get_vector_store
 
@@ -24,3 +25,7 @@ EmbedderDep = Annotated[SentenceTransformerEmbedder, Depends(get_embedder)]
 #: The generation provider is a singleton holding the loaded model; injecting
 #: it keeps routes testable against a fake provider.
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
+
+#: The delay predictor loads its artifact once; injecting it lets tests point
+#: at a temporary registry.
+DelayPredictorDep = Annotated[DelayPredictor, Depends(get_delay_predictor)]

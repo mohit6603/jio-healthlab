@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import documents, health, rag
+from .api import documents, health, ml, rag
 from .api.health import APP_VERSION
 from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
@@ -76,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(rag.router)
+    app.include_router(ml.router)
 
     return app
 
