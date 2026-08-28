@@ -58,3 +58,86 @@ export interface ReportFormState {
   result_due_at: string;
   notes: string;
 }
+
+/* ── AI assistant ─────────────────────────────────────────────── */
+
+/** A knowledge-base source an answer was grounded in. */
+export interface Citation {
+  title: string;
+  source: string;
+  chunk_id: string;
+  score: number;
+  section?: string | null;
+  category?: string | null;
+}
+
+export interface AnswerTimings {
+  retrieval_ms: number;
+  generation_ms: number;
+  total_ms: number;
+}
+
+/** Grounded answer returned by `POST /api/ai/chat`. */
+export interface ChatResponse {
+  answer: string;
+  sources: Citation[];
+  retrieval_count: number;
+  /**
+   * False when nothing relevant was retrieved, the model declined, or the
+   * question crossed the clinical boundary. The UI must present these
+   * differently from a grounded answer.
+   */
+  grounded: boolean;
+  disclaimer: string;
+  model: string;
+  provider: string;
+  finish_reason: string;
+  timings: AnswerTimings;
+}
+
+export interface SearchHit {
+  text: string;
+  score: number;
+  source: string;
+  title: string;
+  chunk_id: string;
+  document_id?: string;
+  section?: string | null;
+  category?: string | null;
+}
+
+export interface AISearchResponse {
+  query: string;
+  results: SearchHit[];
+  retrieval_count: number;
+}
+
+export interface AIComponent {
+  name: string;
+  state: string;
+  detail?: string | null;
+}
+
+export interface AIHealthResponse {
+  reachable: boolean;
+  status: string;
+  detail?: string | null;
+  components: AIComponent[];
+}
+
+/** One turn in the assistant conversation. */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  /** Present on assistant turns that completed successfully. */
+  answer?: ChatResponse;
+  /** Present on assistant turns that failed. */
+  error?: ApiErrorShape;
+  pending?: boolean;
+}
+
+export interface ApiErrorShape {
+  code: string;
+  message: string;
+}

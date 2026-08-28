@@ -1,4 +1,12 @@
-import type { DashboardSummary, Report, ReportFormState } from "./types";
+import type {
+  AIHealthResponse,
+  AISearchResponse,
+  ApiErrorShape,
+  ChatResponse,
+  DashboardSummary,
+  Report,
+  ReportFormState
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -6,18 +14,65 @@ function endpoint(path: string) {
   return `${API_BASE_URL}${path}`;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(endpoint(path), {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
-    },
-    ...options
+/**
+ * Error carrying the API's `{"error": {code, message}}` envelope.
+ *
+ * The code matters to the UI: `AI_SERVICE_UNAVAILABLE` and
+ * `GENERATION_DISABLED` need different messages, and only the server knows
+ * which applies.
+ */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(status: number, body: ApiErrorShape) {
+    super(body.message);
+    this.name = "ApiError";
+    this.code = body.code;
+    this.status = status;
+  }
+
+  toShape(): ApiErrorShape {
+    return { code: this.code, message: this.message };
+  }
+}
+
+async function parseError(response: Response): Promise<ApiError> {
+  try {
+    const body = await response.json();
+    if (body && typeof body === "object" && "error" in body) {
+      const envelope = (body as { error: ApiErrorShape }).error;
+      return new ApiError(response.status, envelope);
+    }
+  } catch {
+    // Fall through to a generic message below.
+  }
+  return new ApiError(response.status, {
+    code: "REQUEST_FAILED",
+    message: `Request failed with status ${response.status}.`
   });
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(endpoint(path), {
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers
+      },
+      ...options
+    });
+  } catch (cause) {
+    // Network-level failure: the server was never reached.
+    throw new ApiError(0, {
+      code: "NETWORK_ERROR",
+      message: "Could not reach the server. Check your connection and retry."
+    });
+  }
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with ${response.status}`);
+    throw await parseError(response);
   }
 
   if (response.status === 204) {
@@ -104,4 +159,36 @@ export function deleteReport(id: number) {
   return request<void>(`/api/reports/${id}`, {
     method: "DELETE"
   });
+}
+
+/* ── AI assistant ─────────────────────────────────────────────── */
+
+export interface ChatOptions {
+  topK?: number;
+  category?: string;
+}
+
+/** Ask the knowledge assistant a grounded question. */
+export function askAssistant(question: string, options: ChatOptions = {}) {
+  return request<ChatResponse>("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      question,
+      top_k: options.topK ?? null,
+      category: options.category ?? null
+    })
+  });
+}
+
+/** Semantic search with no generation -- works when the LLM is unavailable. */
+export function searchKnowledge(query: string, options: ChatOptions = {}) {
+  return request<AISearchResponse>("/api/ai/search", {
+    method: "POST",
+    body: JSON.stringify({ query, top_k: options.topK ?? null })
+  });
+}
+
+/** AI service availability. Never rejects for a down dependency. */
+export function getAIHealth() {
+  return request<AIHealthResponse>("/api/ai/health");
 }
