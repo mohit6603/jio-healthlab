@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from ..core.errors import ERROR_RESPONSES
+from ..core.errors import ERROR_RESPONSES, AppError
 from ..dependencies import CurrentUser, DbSession, Requires
 from ..schemas.auth import (
     LoginRequest,
@@ -17,7 +17,8 @@ from ..schemas.auth import (
     UserRead,
 )
 from ..security import Permission, permissions_for
-from ..services import auth_service
+from ..services import audit_service, auth_service
+from ..services.audit_service import Action, Status
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"], responses=ERROR_RESPONSES)
 
@@ -34,8 +35,25 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"], responses=ERROR_
     ),
 )
 def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
-    user = auth_service.authenticate(db, payload.email, payload.password)
-    return TokenResponse(**auth_service.issue_session(db, user))
+    try:
+        user = auth_service.authenticate(db, payload.email, payload.password)
+    except AppError as exc:
+        # The attempted email is not recorded: it is unverified user input and
+        # would put an address in the audit trail for anyone who typed one.
+        audit_service.record(
+            db,
+            action=Action.LOGIN_FAILED,
+            status=Status.FAILURE,
+            detail=exc.code,
+        )
+        raise
+
+    session = auth_service.issue_session(db, user)
+    audit_service.record(
+        db, action=Action.LOGIN_SUCCEEDED, user=user, resource_type="user",
+        resource_id=user.id,
+    )
+    return TokenResponse(**session)
 
 
 @router.post(
@@ -52,7 +70,25 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
     ),
 )
 def refresh(payload: RefreshRequest, db: DbSession) -> TokenResponse:
-    return TokenResponse(**auth_service.rotate_session(db, payload.refresh_token))
+    try:
+        session = auth_service.rotate_session(db, payload.refresh_token)
+    except AppError as exc:
+        audit_service.record(
+            db,
+            action=(
+                Action.SESSION_REUSE_DETECTED
+                if "security" in exc.message.lower()
+                else Action.SESSION_REFRESHED
+            ),
+            status=Status.FAILURE,
+            detail=exc.code,
+        )
+        raise
+
+    audit_service.record(
+        db, action=Action.SESSION_REFRESHED, user=session["user"],
+    )
+    return TokenResponse(**session)
 
 
 @router.get(
@@ -86,12 +122,14 @@ def logout(
     payload: LogoutRequest, user: CurrentUser, db: DbSession
 ) -> LogoutResponse:
     if payload.all_sessions or payload.refresh_token is None:
-        return LogoutResponse(
-            sessions_ended=auth_service.revoke_all_for_user(db, user.id)
-        )
+        ended = auth_service.revoke_all_for_user(db, user.id)
+    else:
+        ended = 1 if auth_service.revoke_session(db, payload.refresh_token) else 0
 
-    ended = auth_service.revoke_session(db, payload.refresh_token)
-    return LogoutResponse(sessions_ended=1 if ended else 0)
+    audit_service.record(
+        db, action=Action.LOGOUT, user=user, detail=f"sessions_ended={ended}"
+    )
+    return LogoutResponse(sessions_ended=ended)
 
 
 @router.post(
@@ -103,9 +141,9 @@ def logout(
     description="Administrators only. The password is stored as an argon2id "
     "hash and is never returned.",
 )
-def create_user(payload: UserCreate, db: DbSession) -> UserRead:
-    from ..core.errors import AppError
-
+def create_user(
+    payload: UserCreate, db: DbSession, actor: CurrentUser
+) -> UserRead:
     if auth_service.get_user_by_email(db, payload.email) is not None:
         raise AppError(
             "An account with that email already exists.",
@@ -119,6 +157,14 @@ def create_user(payload: UserCreate, db: DbSession) -> UserRead:
         full_name=payload.full_name,
         password=payload.password,
         role=payload.role,
+    )
+    audit_service.record(
+        db,
+        action=Action.USER_CREATED,
+        user=actor,
+        resource_type="user",
+        resource_id=user.id,
+        detail=f"role={user.role}",
     )
     return UserRead.model_validate(user)
 

@@ -8,12 +8,13 @@ already knows how to handle.
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from ..core.errors import ERROR_RESPONSES
+from ..core.errors import ERROR_RESPONSES, AppError
 from ..dependencies import CurrentUser, DbSession, Requires
 from ..schemas.ai import (
     AIHealthResponse,
@@ -29,8 +30,9 @@ from ..schemas.ai import (
 )
 from ..schemas.report import ReportRead
 from ..security import Permission
-from ..services import report_search_service, risk_service
+from ..services import audit_service, report_search_service, risk_service
 from ..services.ai_client import AIServiceClient, get_ai_client
+from ..services.audit_service import Action, QueryType
 
 router = APIRouter(prefix="/api/ai", tags=["AI"], responses=ERROR_RESPONSES)
 
@@ -68,9 +70,27 @@ async def ai_health(client: AIClientDep, user: CurrentUser) -> AIHealthResponse:
         "**504** when generation exceeds the timeout."
     ),
 )
-async def chat(payload: ChatRequest, client: AIClientDep) -> ChatResponse:
-    result = await client.chat(
-        payload.question, top_k=payload.top_k, category=payload.category
+async def chat(
+    payload: ChatRequest, client: AIClientDep, db: DbSession, user: CurrentUser
+) -> ChatResponse:
+    started = time.perf_counter()
+    try:
+        result = await client.chat(
+            payload.question, top_k=payload.top_k, category=payload.category
+        )
+    except AppError as exc:
+        _log_ai(db, QueryType.CHAT, user, started, error_code=exc.code)
+        raise
+
+    # The question itself is never stored -- only how the call went.
+    _log_ai(
+        db,
+        QueryType.CHAT,
+        user,
+        started,
+        source_count=result.get("retrieval_count"),
+        grounded=result.get("grounded"),
+        model=result.get("model"),
     )
     return ChatResponse(**result)
 
@@ -85,9 +105,24 @@ async def chat(payload: ChatRequest, client: AIClientDep) -> ChatResponse:
         "is unavailable, so it is a useful fallback for the assistant UI."
     ),
 )
-async def search(payload: SearchRequest, client: AIClientDep) -> SearchResponse:
-    result = await client.search(
-        payload.query, top_k=payload.top_k, category=payload.category
+async def search(
+    payload: SearchRequest, client: AIClientDep, db: DbSession, user: CurrentUser
+) -> SearchResponse:
+    started = time.perf_counter()
+    try:
+        result = await client.search(
+            payload.query, top_k=payload.top_k, category=payload.category
+        )
+    except AppError as exc:
+        _log_ai(db, QueryType.SEARCH, user, started, error_code=exc.code)
+        raise
+
+    _log_ai(
+        db,
+        QueryType.SEARCH,
+        user,
+        started,
+        source_count=result.get("retrieval_count"),
     )
     return SearchResponse(**result)
 
@@ -114,6 +149,7 @@ async def search(payload: SearchRequest, client: AIClientDep) -> SearchResponse:
 async def risk_analytics(
     db: DbSession,
     client: AIClientDep,
+    user: CurrentUser,
     limit: int = Query(
         default=100, ge=1, le=500, description="Maximum reports to score."
     ),
@@ -125,8 +161,22 @@ async def risk_analytics(
     loads = risk_service.branch_load(db)
     features = [risk_service.build_features(report, loads) for report in reports]
 
-    result = await client.predict_delay_batch(features)
+    started = time.perf_counter()
+    try:
+        result = await client.predict_delay_batch(features)
+    except AppError as exc:
+        _log_ai(db, QueryType.RISK_ANALYTICS, user, started, error_code=exc.code)
+        raise
+
     predictions = result.get("predictions", [])
+    _log_ai(
+        db,
+        QueryType.RISK_ANALYTICS,
+        user,
+        started,
+        source_count=len(predictions),
+        model=str(result.get("model_version", "")),
+    )
 
     analytics = risk_service.aggregate(
         reports,
@@ -157,8 +207,12 @@ async def risk_analytics(
     ),
 )
 async def report_search(
-    payload: ReportSearchRequest, db: DbSession, client: AIClientDep
+    payload: ReportSearchRequest,
+    db: DbSession,
+    client: AIClientDep,
+    user: CurrentUser,
 ) -> ReportSearchResponse:
+    started = time.perf_counter()
     result = await client.search_reports(
         payload.query,
         top_k=payload.top_k,
@@ -170,6 +224,7 @@ async def report_search(
     )
 
     rows = report_search_service.hydrate(db, result.get("results", []))
+    _log_ai(db, QueryType.REPORT_SEARCH, user, started, source_count=len(rows))
     return ReportSearchResponse(
         query=payload.query.strip(),
         results=[
@@ -199,6 +254,7 @@ async def report_search(
 async def rebuild_report_index(
     db: DbSession,
     client: AIClientDep,
+    user: CurrentUser,
     limit: int = Query(default=500, ge=1, le=1000),
 ) -> ReportIndexResponse:
     reports = report_search_service.reports_to_index(db, limit)
@@ -207,7 +263,39 @@ async def rebuild_report_index(
 
     payload = [report_search_service.index_payload(report) for report in reports]
     result = await client.index_reports(payload)
+    audit_service.record(
+        db,
+        action=Action.REPORT_INDEX_REBUILT,
+        user=user,
+        resource_type="report_index",
+        detail=f"indexed={result.get('indexed', 0)}",
+    )
     return ReportIndexResponse(
         indexed=int(result.get("indexed", 0)),
         collection=str(result.get("collection", "")),
+    )
+
+
+def _log_ai(
+    db,
+    query_type: QueryType,
+    user,
+    started: float,
+    *,
+    error_code: str | None = None,
+    source_count: int | None = None,
+    grounded: bool | None = None,
+    model: str | None = None,
+) -> None:
+    """Record AI usage metadata. Never the question, never the answer."""
+    audit_service.record_ai_query(
+        db,
+        query_type=query_type,
+        user=user,
+        success=error_code is None,
+        error_code=error_code,
+        latency_ms=round((time.perf_counter() - started) * 1000, 2),
+        source_count=source_count,
+        grounded=grounded,
+        model=model,
     )

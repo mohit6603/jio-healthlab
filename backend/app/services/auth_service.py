@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -149,7 +150,7 @@ def issue_refresh_token(
 
 def issue_session(
     db: Session, user: User, settings: Settings | None = None
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Issue an access token and a refresh token for ``user``."""
     settings = settings or get_settings()
     access_token, expires_at = create_access_token(
@@ -191,7 +192,7 @@ def revoke_all_for_user(db: Session, user_id: int) -> int:
 
 def rotate_session(
     db: Session, refresh_token: str, settings: Settings | None = None
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Exchange a refresh token for a new session, revoking the old token."""
     settings = settings or get_settings()
     record = _find_refresh_record(db, refresh_token)

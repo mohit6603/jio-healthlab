@@ -1,12 +1,13 @@
 """Laboratory report endpoints."""
 
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Query, status
 
-from ..core.errors import ERROR_RESPONSES, NOT_FOUND_RESPONSE
+from ..core.errors import ERROR_RESPONSES, NOT_FOUND_RESPONSE, AppError
 from ..core.logging import get_logger
-from ..dependencies import DbSession, Requires
+from ..dependencies import CurrentUser, DbSession, Requires
 from ..models import Report
 from ..schemas.ai import Citation, ExplainRequest, ReportExplanation
 from ..schemas.report import (
@@ -16,8 +17,9 @@ from ..schemas.report import (
     ReportUpdate,
 )
 from ..security import Permission
-from ..services import report_service
+from ..services import audit_service, report_service
 from ..services.ai_client import AIServiceClient, get_ai_client
+from ..services.audit_service import Action, QueryType, Status
 from ..services.sanitizer import sanitize_report
 
 logger = get_logger(__name__)
@@ -85,8 +87,19 @@ def get_report(report_id: int, db: DbSession) -> Report:
     dependencies=[Requires(Permission.REPORTS_CREATE)],
     summary="Create a report",
 )
-def create_report(payload: ReportCreate, db: DbSession) -> Report:
-    return report_service.create_report(db, payload)
+def create_report(
+    payload: ReportCreate, db: DbSession, user: CurrentUser
+) -> Report:
+    report = report_service.create_report(db, payload)
+    audit_service.record(
+        db,
+        action=Action.REPORT_CREATED,
+        user=user,
+        resource_type="report",
+        resource_id=report.id,
+        detail=f"test_type={report.test_type} priority={report.priority}",
+    )
+    return report
 
 
 @router.put(
@@ -97,8 +110,21 @@ def create_report(payload: ReportCreate, db: DbSession) -> Report:
     summary="Update a report",
     description="Partial update -- only the fields present in the body change.",
 )
-def update_report(report_id: int, payload: ReportUpdate, db: DbSession) -> Report:
-    return report_service.update_report(db, report_id, payload)
+def update_report(
+    report_id: int, payload: ReportUpdate, db: DbSession, user: CurrentUser
+) -> Report:
+    changed = sorted(payload.model_dump(exclude_unset=True))
+    report = report_service.update_report(db, report_id, payload)
+    audit_service.record(
+        db,
+        action=Action.REPORT_UPDATED,
+        user=user,
+        resource_type="report",
+        resource_id=report_id,
+        # Field names only. Values could include a patient name or a note.
+        detail=f"fields={','.join(changed)}",
+    )
+    return report
 
 
 @router.delete(
@@ -108,8 +134,15 @@ def update_report(report_id: int, payload: ReportUpdate, db: DbSession) -> Repor
     dependencies=[Requires(Permission.REPORTS_DELETE)],
     summary="Delete a report",
 )
-def delete_report(report_id: int, db: DbSession) -> None:
+def delete_report(report_id: int, db: DbSession, user: CurrentUser) -> None:
     report_service.delete_report(db, report_id)
+    audit_service.record(
+        db,
+        action=Action.REPORT_DELETED,
+        user=user,
+        resource_type="report",
+        resource_id=report_id,
+    )
 
 
 @router.post(
@@ -136,6 +169,7 @@ async def explain_report(
     report_id: int,
     db: DbSession,
     client: AIClientDep,
+    user: CurrentUser,
     payload: ExplainRequest = Body(default_factory=ExplainRequest),
 ) -> ReportExplanation:
     report = report_service.get_report(db, report_id)
@@ -150,10 +184,50 @@ async def explain_report(
         },
     )
 
-    result = await client.explain_report(
-        sanitized.render(),
-        search_text=sanitized.search_text,
-        top_k=payload.top_k,
+    started = time.perf_counter()
+    try:
+        result = await client.explain_report(
+            sanitized.render(),
+            search_text=sanitized.search_text,
+            top_k=payload.top_k,
+        )
+    except AppError as exc:
+        audit_service.record_ai_query(
+            db,
+            query_type=QueryType.EXPLAIN,
+            user=user,
+            success=False,
+            error_code=exc.code,
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        audit_service.record(
+            db,
+            action=Action.AI_REPORT_EXPLAINED,
+            status=Status.FAILURE,
+            user=user,
+            resource_type="report",
+            resource_id=report_id,
+            detail=exc.code,
+        )
+        raise
+
+    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+    audit_service.record_ai_query(
+        db,
+        query_type=QueryType.EXPLAIN,
+        user=user,
+        latency_ms=latency_ms,
+        source_count=result.get("retrieval_count"),
+        grounded=result.get("grounded"),
+        model=result.get("model"),
+    )
+    audit_service.record(
+        db,
+        action=Action.AI_REPORT_EXPLAINED,
+        user=user,
+        resource_type="report",
+        resource_id=report_id,
+        latency_ms=latency_ms,
     )
 
     return ReportExplanation(

@@ -1,5 +1,5 @@
 """HTTP routers grouped by domain."""
 
-from . import ai, auth, dashboard, reports, system
+from . import ai, audit, auth, dashboard, reports, system
 
-__all__ = ["ai", "auth", "dashboard", "reports", "system"]
+__all__ = ["ai", "audit", "auth", "dashboard", "reports", "system"]
