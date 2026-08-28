@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Bot, FlaskConical, LayoutDashboard } from "lucide-react";
+import { Bot, FlaskConical, LayoutDashboard, TrendingUp } from "lucide-react";
 import { getAIHealth } from "./api";
 import type { AIHealthResponse } from "./types";
 
@@ -49,6 +49,10 @@ function App() {
           <NavLink to="/assistant" className={navClass}>
             <Bot size={17} />
             <span>AI Assistant</span>
+          </NavLink>
+          <NavLink to="/analytics" className={navClass}>
+            <TrendingUp size={17} />
+            <span>AI Analytics</span>
           </NavLink>
         </nav>
       </header>

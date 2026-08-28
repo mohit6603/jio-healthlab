@@ -5,7 +5,8 @@ import type {
   ChatResponse,
   DashboardSummary,
   Report,
-  ReportFormState
+  ReportFormState,
+  RiskAnalytics
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
@@ -191,4 +192,9 @@ export function searchKnowledge(query: string, options: ChatOptions = {}) {
 /** AI service availability. Never rejects for a down dependency. */
 export function getAIHealth() {
   return request<AIHealthResponse>("/api/ai/health");
+}
+
+/** Predicted delay risk across in-flight reports. */
+export function getRiskAnalytics(limit = 100) {
+  return request<RiskAnalytics>(`/api/ai/risk-analytics?limit=${limit}`);
 }

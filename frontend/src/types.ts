@@ -141,3 +141,50 @@ export interface ApiErrorShape {
   code: string;
   message: string;
 }
+
+/* ── AI risk analytics ────────────────────────────────────────── */
+
+export type RiskLevel = "low" | "medium" | "high";
+
+export interface RiskGroup {
+  label: string;
+  count: number;
+  average_probability: number;
+  high_risk: number;
+}
+
+export interface HighestRiskBranch {
+  branch: string;
+  average_probability: number;
+  reports: number;
+  high_risk: number;
+}
+
+export interface ReportRisk {
+  report_id: number;
+  test_type: string;
+  branch?: string | null;
+  city?: string | null;
+  priority?: string | null;
+  status?: string | null;
+  result_due_at?: string | null;
+  delay_probability: number;
+  risk_level: RiskLevel;
+}
+
+export interface RiskAnalytics {
+  generated_at: string;
+  model_version: string;
+  /** True when the scoring model was trained on synthetic data. */
+  synthetic_model: boolean;
+  reports_scored: number;
+  at_risk: number;
+  high_risk: number;
+  predicted_late: number;
+  average_probability: number;
+  highest_risk_branch: HighestRiskBranch | null;
+  risk_distribution: Record<string, number>;
+  by_branch: RiskGroup[];
+  by_test_type: RiskGroup[];
+  reports: ReportRisk[];
+}

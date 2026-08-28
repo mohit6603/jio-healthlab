@@ -143,3 +143,64 @@ class ReportExplanation(BaseModel):
     #: Exactly what was sent to the AI service, so the boundary is auditable
     #: from the response itself.
     context_sent: dict[str, str] = Field(default_factory=dict)
+
+
+class RiskGroup(BaseModel):
+    """Aggregated risk for one branch or test type."""
+
+    label: str
+    count: int
+    average_probability: float
+    high_risk: int
+
+
+class HighestRiskBranch(BaseModel):
+    branch: str
+    average_probability: float
+    reports: int
+    high_risk: int
+
+
+class ReportRisk(BaseModel):
+    """Predicted delay risk for one in-flight report.
+
+    Deliberately carries no patient identifier -- the row is keyed by report
+    id, and everything else is operational metadata.
+    """
+
+    report_id: int
+    test_type: str
+    branch: str | None = None
+    city: str | None = None
+    priority: str | None = None
+    status: str | None = None
+    result_due_at: str | None = None
+    delay_probability: float
+    risk_level: str
+
+
+class RiskAnalyticsResponse(BaseModel):
+    """Operational delay-risk snapshot for the AI analytics dashboard."""
+
+    generated_at: str
+    model_version: str = ""
+    synthetic_model: bool = Field(
+        default=True,
+        description=(
+            "True when the scoring model was trained on synthetic data. These "
+            "figures demonstrate the pipeline; they are not an operational "
+            "forecast."
+        ),
+    )
+    reports_scored: int = 0
+    at_risk: int = Field(default=0, description="Reports in the medium or high band.")
+    high_risk: int = 0
+    predicted_late: int = Field(
+        default=0, description="Reports with probability at or above 0.5."
+    )
+    average_probability: float = 0.0
+    highest_risk_branch: HighestRiskBranch | None = None
+    risk_distribution: dict[str, int] = Field(default_factory=dict)
+    by_branch: list[RiskGroup] = Field(default_factory=list)
+    by_test_type: list[RiskGroup] = Field(default_factory=list)
+    reports: list[ReportRisk] = Field(default_factory=list)

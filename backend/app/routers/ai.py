@@ -8,18 +8,22 @@ already knows how to handle.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..core.errors import ERROR_RESPONSES
+from ..dependencies import DbSession
 from ..schemas.ai import (
     AIHealthResponse,
     ChatRequest,
     ChatResponse,
+    RiskAnalyticsResponse,
     SearchRequest,
     SearchResponse,
 )
+from ..services import risk_service
 from ..services.ai_client import AIServiceClient, get_ai_client
 
 router = APIRouter(prefix="/api/ai", tags=["AI"], responses=ERROR_RESPONSES)
@@ -77,3 +81,49 @@ async def search(payload: SearchRequest, client: AIClientDep) -> SearchResponse:
         payload.query, top_k=payload.top_k, category=payload.category
     )
     return SearchResponse(**result)
+
+
+@router.get(
+    "/risk-analytics",
+    response_model=RiskAnalyticsResponse,
+    summary="Predicted delay risk across in-flight reports",
+    description=(
+        "Scores every report that can still miss its turnaround target and "
+        "aggregates the result.\n\n"
+        "Queue features are computed from the database -- how many requests "
+        "are open at each branch and how many of those are urgent -- so the "
+        "scores reflect the lab's actual state rather than supplied "
+        "estimates. Reports already `ready` or `delivered` are excluded: they "
+        "cannot become late.\n\n"
+        "**No patient identifier is sent to the AI service or returned.** "
+        "Rows are keyed by report id.\n\n"
+        "Returns **503** when the AI service or the model is unavailable; the "
+        "reports API is unaffected."
+    ),
+)
+async def risk_analytics(
+    db: DbSession,
+    client: AIClientDep,
+    limit: int = Query(
+        default=100, ge=1, le=500, description="Maximum reports to score."
+    ),
+) -> RiskAnalyticsResponse:
+    reports = risk_service.in_flight_reports(db, limit)
+    if not reports:
+        return RiskAnalyticsResponse(**asdict(risk_service.empty_analytics()))
+
+    loads = risk_service.branch_load(db)
+    features = [risk_service.build_features(report, loads) for report in reports]
+
+    result = await client.predict_delay_batch(features)
+    predictions = result.get("predictions", [])
+
+    analytics = risk_service.aggregate(
+        reports,
+        predictions,
+        model_version=str(result.get("model_version", "")),
+        synthetic_model=bool(
+            predictions[0].get("synthetic_model", True) if predictions else True
+        ),
+    )
+    return RiskAnalyticsResponse(**asdict(analytics))

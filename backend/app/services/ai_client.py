@@ -211,6 +211,18 @@ class AIServiceClient:
             json=_compact({"query": query, "top_k": top_k, "category": category}),
         )
 
+    async def predict_delay_batch(
+        self, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Score many requests in one call.
+
+        The dashboard needs a risk score per visible report; one round trip per
+        report would make the page unusable.
+        """
+        return await self._request(
+            "POST", "/ml/predict-delay/batch", json={"items": items}
+        )
+
     async def explain_report(
         self,
         report_summary: str,
