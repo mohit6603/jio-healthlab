@@ -65,8 +65,16 @@ _REQUEST_PATTERNS: tuple[re.Pattern[str], ...] = (
 #: narrow -- these address the reader personally, which an informational
 #: explanation never needs to do.
 _ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # "you have" alone is far too broad: "a sample you have already given",
+    # "you have a report ready" are all innocuous. Require a condition to
+    # follow, within a few words.
     re.compile(
-        r"\byou\s+(?:have|are\s+suffering|likely\s+have|probably\s+have)\b", re.I
+        r"\byou\s+(?:have|likely\s+have|probably\s+have|are\s+suffering\s+from)"
+        r"(?:\s+\w+){0,3}\s+"
+        r"(anaemia|anemia|diabet\w+|infection|deficiency|disease|disorder|"
+        r"cancer|hypothyroid\w*|hyperthyroid\w*|hypertension|"
+        r"a\s+condition|an?\s+abnormality)\b",
+        re.I,
     ),
     re.compile(
         r"\byour\s+\w+\s+(?:level|count|value|result)s?\b"

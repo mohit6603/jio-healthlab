@@ -103,3 +103,38 @@ def test_boundary_message_redirects_to_a_clinician():
     assert "can't interpret results" in lowered
     # It should still tell the user what the assistant *can* do.
     assert "cbc" in lowered
+
+
+# --------------------------------------------- false positives, regression ---
+# Found by the RAG evaluation: "Can I add a test to a sample I have already
+# given?" produced a legitimate operational answer that was suppressed, because
+# the bare phrase "you have" matched the clinical-assertion pattern.
+INNOCUOUS_ANSWERS = [
+    "Whether you can add a test to a sample you have already given depends on "
+    "the tube type collected and the volume remaining [1].",
+    "You have a report ready for collection at the branch.",
+    "If you have questions about your appointment, contact the branch [2].",
+    "Once you have fasted for 9-12 hours, the sample can be taken [1].",
+    "You have the option of visiting any collection centre [3].",
+    "Samples you have provided are stored under the retention policy [2].",
+]
+
+
+@pytest.mark.parametrize("answer", INNOCUOUS_ANSWERS)
+def test_innocuous_you_have_phrases_are_not_suppressed(answer):
+    assert contains_clinical_advice(answer) is False
+
+
+CONDITION_ASSERTIONS = [
+    "You have anaemia.",
+    "You have anaemia based on these results.",
+    "You likely have a deficiency of iron.",
+    "You probably have an underlying infection.",
+    "You are suffering from hypothyroidism.",
+    "Based on this you have diabetes.",
+]
+
+
+@pytest.mark.parametrize("answer", CONDITION_ASSERTIONS)
+def test_condition_assertions_are_still_caught(answer):
+    assert contains_clinical_advice(answer) is True
