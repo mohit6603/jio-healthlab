@@ -1,8 +1,9 @@
+"""Pydantic schemas for laboratory reports."""
+
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-
 
 ReportStatus = Literal[
     "registered",
@@ -14,8 +15,32 @@ ReportStatus = Literal[
 ]
 ReportPriority = Literal["routine", "urgent"]
 
+# Fields that are trimmed and coerced to NULL when blank.
+_TRIMMED_FIELDS = (
+    "patient_name",
+    "test_type",
+    "gender",
+    "phone",
+    "city",
+    "lab_branch",
+    "doctor_name",
+    "notes",
+)
 
-class ReportBase(BaseModel):
+
+class _TrimBlankStrings(BaseModel):
+    """Mixin: strip surrounding whitespace and treat empty strings as NULL."""
+
+    @field_validator(*_TRIMMED_FIELDS, mode="before", check_fields=False)
+    @classmethod
+    def strip_blank_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class ReportBase(_TrimBlankStrings):
     patient_name: str = Field(min_length=2, max_length=120)
     age: int = Field(ge=0, le=120)
     test_type: str = Field(min_length=2, max_length=120)
@@ -31,30 +56,14 @@ class ReportBase(BaseModel):
     result_due_at: datetime | None = None
     notes: str | None = Field(default=None, max_length=2000)
 
-    @field_validator(
-        "patient_name",
-        "test_type",
-        "gender",
-        "phone",
-        "city",
-        "lab_branch",
-        "doctor_name",
-        "notes",
-        mode="before",
-    )
-    @classmethod
-    def strip_blank_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
-
 
 class ReportCreate(ReportBase):
-    pass
+    """Payload for ``POST /api/reports``."""
 
 
-class ReportUpdate(BaseModel):
+class ReportUpdate(_TrimBlankStrings):
+    """Partial update payload for ``PUT /api/reports/{id}``."""
+
     patient_name: str | None = Field(default=None, min_length=2, max_length=120)
     age: int | None = Field(default=None, ge=0, le=120)
     test_type: str | None = Field(default=None, min_length=2, max_length=120)
@@ -70,26 +79,10 @@ class ReportUpdate(BaseModel):
     result_due_at: datetime | None = None
     notes: str | None = Field(default=None, max_length=2000)
 
-    @field_validator(
-        "patient_name",
-        "test_type",
-        "gender",
-        "phone",
-        "city",
-        "lab_branch",
-        "doctor_name",
-        "notes",
-        mode="before",
-    )
-    @classmethod
-    def strip_blank_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
-
 
 class ReportRead(ReportBase):
+    """Full report representation returned by the API."""
+
     id: int
     created_at: datetime
     updated_at: datetime
@@ -97,21 +90,13 @@ class ReportRead(ReportBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class DashboardSummary(BaseModel):
-    total_reports: int
-    ready_reports: int
-    urgent_reports: int
-    avg_age: float | None
-    unique_tests: int
-    latest_report_id: int | None
-    due_soon: list[ReportRead]
-    recent_reports: list[ReportRead]
-    by_status: dict[str, int]
-    by_test_type: dict[str, int]
-    by_city: dict[str, int]
+class ReportFilters(BaseModel):
+    """Normalised query parameters for the report list endpoint."""
 
-
-class HealthResponse(BaseModel):
-    status: str
-    app: str
-    environment: str
+    search: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    city: str | None = None
+    test_type: str | None = None
+    limit: int = 100
+    offset: int = 0

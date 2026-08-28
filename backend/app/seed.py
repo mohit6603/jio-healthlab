@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal
 from .models import Report
 
-
 SEED_REPORTS = [
     {
         "patient_name": "Aditya Sharma",
