@@ -13,8 +13,8 @@ from fastapi import APIRouter, File, Form, UploadFile, status
 
 from ..core.errors import ERROR_RESPONSES, DocumentError, DocumentNotFoundError
 from ..core.logging import get_logger
+from ..rag.ingestion import IngestionPipeline
 from ..rag.loaders import SUPPORTED_MIME_TYPES, SUPPORTED_SUFFIXES
-from ..rag.pipeline import IngestionPipeline
 from ..schemas.rag import (
     DocumentDeleteResponse,
     DocumentListResponse,

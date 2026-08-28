@@ -179,3 +179,70 @@ class SearchResponse(BaseModel):
     top_k: int = Field(description="Limit actually applied.")
     score_threshold: float = Field(description="Threshold actually applied.")
     timings: RetrievalTimings
+
+
+class Citation(BaseModel):
+    """A source the answer was grounded in."""
+
+    title: str
+    source: str
+    chunk_id: str
+    score: float
+    section: str | None = None
+    category: str | None = None
+
+
+class QueryRequest(BaseModel):
+    """Request body for ``POST /rag/query``."""
+
+    question: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Natural-language question about laboratory tests or workflow.",
+        examples=["What does a CBC test measure?"],
+    )
+    top_k: int | None = Field(
+        default=None, ge=1, le=20, description="Chunks to retrieve. Defaults to TOP_K."
+    )
+    score_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Minimum similarity to retrieve."
+    )
+    category: str | None = Field(
+        default=None, description="Restrict retrieval to one knowledge area."
+    )
+    max_new_tokens: int | None = Field(
+        default=None, ge=16, le=1024, description="Cap on generated tokens."
+    )
+
+
+class AnswerTimings(BaseModel):
+    """Latency breakdown for one answer, in milliseconds."""
+
+    retrieval_ms: float
+    generation_ms: float
+    total_ms: float
+
+
+class QueryResponse(BaseModel):
+    """Grounded answer returned by ``POST /rag/query``."""
+
+    answer: str
+    sources: list[Citation]
+    retrieval_count: int = Field(description="Chunks the answer was grounded in.")
+    grounded: bool = Field(
+        description=(
+            "False when nothing relevant was retrieved, or when the model "
+            "declined for lack of grounding. The answer is still returned, but "
+            "the UI should present it as a non-answer."
+        )
+    )
+    disclaimer: str = Field(
+        description="Healthcare safety notice to display alongside the answer."
+    )
+    model: str
+    provider: str
+    finish_reason: str = Field(
+        description="``stop``, ``length``, ``timeout`` or ``no_context``."
+    )
+    prompt_truncated: bool = False
+    timings: AnswerTimings

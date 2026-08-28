@@ -12,7 +12,7 @@ from app.rag.retriever import (
 )
 from app.rag.vector_store import VectorStore
 from app.schemas.rag import SearchHit
-from tests.test_pipeline import StubEmbedder
+from tests.test_ingestion import StubEmbedder
 from tests.test_vector_store import StubClient, StubPoint, make_chunk
 
 

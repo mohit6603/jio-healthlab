@@ -4,7 +4,7 @@ import pytest
 
 from app.rag.embeddings import get_embedder
 from app.rag.vector_store import VectorStore, get_vector_store
-from tests.test_pipeline import StubEmbedder
+from tests.test_ingestion import StubEmbedder
 from tests.test_vector_store import StubClient, StubPoint, make_chunk
 
 

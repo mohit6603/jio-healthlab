@@ -18,8 +18,8 @@ from ..core.errors import AIError
 from ..core.logging import configure_logging, get_logger
 from .chunker import chunk_document, estimate_tokens
 from .embeddings import get_embedder
+from .ingestion import IngestionPipeline
 from .loaders import discover, load_file
-from .pipeline import IngestionPipeline
 from .vector_store import get_vector_store
 
 logger = get_logger(__name__)

@@ -11,8 +11,8 @@ import pytest
 
 from app.core.errors import DocumentError
 from app.rag.embeddings import chunk_embedding_input
+from app.rag.ingestion import IngestionPipeline
 from app.rag.loaders import RawDocument
-from app.rag.pipeline import IngestionPipeline
 from app.rag.vector_store import VectorStore
 from app.schemas.rag import KnowledgeChunk
 from tests.test_vector_store import StubClient

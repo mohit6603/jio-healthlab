@@ -10,9 +10,18 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..core.errors import ERROR_RESPONSES
+from ..rag.pipeline import RagAnswer, RagPipeline
 from ..rag.retriever import Retriever, build_filters
-from ..schemas.rag import RetrievalTimings, SearchRequest, SearchResponse
-from .deps import EmbedderDep, SettingsDep, VectorStoreDep
+from ..schemas.rag import (
+    AnswerTimings,
+    Citation,
+    QueryRequest,
+    QueryResponse,
+    RetrievalTimings,
+    SearchRequest,
+    SearchResponse,
+)
+from .deps import EmbedderDep, LLMProviderDep, SettingsDep, VectorStoreDep
 
 router = APIRouter(prefix="/rag", tags=["RAG"], responses=ERROR_RESPONSES)
 
@@ -57,6 +66,68 @@ def search(
         timings=RetrievalTimings(
             embed_ms=result.embed_ms,
             search_ms=result.search_ms,
+            total_ms=result.total_ms,
+        ),
+    )
+
+
+@router.post(
+    "/query",
+    response_model=QueryResponse,
+    summary="Ask a grounded question",
+    description=(
+        "Retrieves relevant knowledge chunks and answers from them, returning "
+        "the sources the answer was grounded in.\n\n"
+        "When nothing relevant is retrieved the model is **not** called: a "
+        "fixed 'not enough information' message is returned with "
+        "`grounded=false` and no sources. Returns **503** when generation is "
+        "disabled or the model cannot be loaded -- `/rag/search` still works "
+        "in that case."
+    ),
+)
+def query(
+    payload: QueryRequest,
+    settings: SettingsDep,
+    store: VectorStoreDep,
+    embedder: EmbedderDep,
+    provider: LLMProviderDep,
+) -> QueryResponse:
+    pipeline = RagPipeline(Retriever(embedder, store, settings), provider, settings)
+    result = pipeline.answer(
+        payload.question,
+        top_k=payload.top_k,
+        score_threshold=payload.score_threshold,
+        category=payload.category,
+        max_new_tokens=payload.max_new_tokens,
+    )
+    return to_query_response(result)
+
+
+def to_query_response(result: RagAnswer) -> QueryResponse:
+    """Map the pipeline result onto the wire schema."""
+    return QueryResponse(
+        answer=result.answer,
+        sources=[
+            Citation(
+                title=hit.title,
+                source=hit.source,
+                chunk_id=hit.chunk_id,
+                score=hit.score,
+                section=hit.section,
+                category=hit.category,
+            )
+            for hit in result.hits
+        ],
+        retrieval_count=result.retrieval_count,
+        grounded=result.grounded,
+        disclaimer=result.disclaimer,
+        model=result.model,
+        provider=result.provider,
+        finish_reason=result.finish_reason,
+        prompt_truncated=result.prompt_truncated,
+        timings=AnswerTimings(
+            retrieval_ms=result.retrieval_ms,
+            generation_ms=result.generation_ms,
             total_ms=result.total_ms,
         ),
     )
