@@ -166,6 +166,9 @@ class SentenceTransformerEmbedder:
             texts,
             batch_size=self._settings.embedding_batch_size,
             # Cosine distance in Qdrant assumes unit-length vectors.
+            # all-MiniLM-L6-v2 already ends its pipeline with a Normalize
+            # module, but passing the flag makes unit length a property of
+            # this embedder rather than of whichever model is configured.
             normalize_embeddings=self._settings.embedding_normalize,
             convert_to_numpy=True,
             show_progress_bar=False,
