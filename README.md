@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688)
 ![Qdrant](https://img.shields.io/badge/Qdrant-1.19-dc244c)
 ![Docker](https://img.shields.io/badge/docker-compose-2496ed)
-![Tests](https://img.shields.io/badge/tests-823%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-837%20passing-brightgreen)
 
 An AI-powered laboratory operations platform: report management, a
 retrieval-augmented knowledge assistant grounded in the lab's own
@@ -135,9 +135,9 @@ jio-healthlab/
 │   │   ├── ml/              dataset · features · train · evaluate
 │   │   │                    registry · predictor
 │   │   └── bootstrap.py
-│   ├── knowledge/           12 original documents: lab_tests · sop · faq
+│   ├── knowledge/           14 original documents: lab_tests · sop · faq
 │   ├── evaluation/          43-question set + two evaluators
-│   └── tests/               459 tests
+│   └── tests/               472 tests
 │
 ├── frontend/                React SPA
 │   └── src/{pages,auth,api.ts,types.ts}      72 tests
@@ -180,10 +180,18 @@ Created by the seeder. Password for all four: `ChangeMe!Admin123`.
 
 ### First start
 
-Downloads ~1.1 GB of model weights into a Docker volume, then ingests the
-knowledge base and trains the delay model. Containers report healthy before
-that finishes — generation returns 503 until the weights land. Subsequent
-starts reuse everything and take seconds.
+The `bootstrap` container ingests the knowledge base, trains the delay model
+and **pre-downloads ~1.1 GB of model weights** into a Docker volume. Expect
+3–6 minutes on a first run, most of it the download.
+
+Pre-downloading is deliberate. Without it the stack looks ready, and then the
+first person to ask the assistant a question waits minutes behind a gigabyte
+download — usually long enough to hit a proxy timeout. The wait happens in
+bootstrap, where waiting is expected.
+
+The app is usable throughout: reports, dashboard and search work immediately;
+only answer generation returns 503 until the weights land. Subsequent starts
+reuse everything and take seconds.
 
 ### Commands
 
@@ -326,7 +334,7 @@ Risk bands: `low < 0.35 ≤ medium < 0.65 ≤ high`. Every prediction carries it
 
 ## Evaluation
 
-43 hand-written questions across all 12 knowledge documents. Expectations were
+43 hand-written questions across the knowledge base. Expectations were
 written by reading the documents; a test asserts every expected keyword
 actually appears in its cited source.
 
@@ -346,11 +354,11 @@ right chunk first. Both are documented in [docs/rag.md](docs/rag.md).
 
 ```bash
 cd backend    && pytest                    # 292
-cd ai-service && pytest                    # 459 (+ 22 integration)
+cd ai-service && pytest                    # 472 (+ 22 integration)
 cd frontend   && npm test                  # 72
 ```
 
-**823 tests.** Backend uses in-memory SQLite and mocks the AI service with
+**837 tests.** Backend uses in-memory SQLite and mocks the AI service with
 respx — no model, no Qdrant, no network. AI-service unit tests run *without*
 torch installed, which keeps CI fast and proves the graceful-degradation paths.
 Integration tests against a real Qdrant are marked and run separately.

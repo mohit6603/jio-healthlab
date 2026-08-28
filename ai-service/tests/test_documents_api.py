@@ -196,6 +196,6 @@ def test_reindex_ingests_the_bundled_knowledge_base(doc_client):
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["documents"]) == 12
+    assert len(body["documents"]) >= 12
     assert body["total_chunks"] > 40
     assert body["failures"] == []

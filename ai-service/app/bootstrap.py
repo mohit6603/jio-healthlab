@@ -7,13 +7,15 @@ each is actually missing. Safe to run on every ``docker compose up``: a second
 run does nothing and costs a couple of seconds.
 
 Failures are reported and do not abort the other step. A missing knowledge
-index and a missing ML model are independent problems, and neither should stop
-the service starting -- retrieval and prediction degrade separately.
+index, a missing ML model and an undownloaded generation model are independent
+problems, and none should stop the service starting -- retrieval, prediction
+and generation degrade separately.
 """
 
 from __future__ import annotations
 
 import sys
+import time
 
 from .config import get_settings
 from .core.errors import AIError
@@ -85,6 +87,31 @@ def ensure_model(force: bool = False) -> bool:
     return True
 
 
+def ensure_generation_model() -> bool:
+    """Download the generation model so the first user request does not.
+
+    Without this, a fresh install works right up until someone asks the
+    assistant a question -- and that request then blocks for minutes while a
+    gigabyte downloads, usually long enough to hit a proxy timeout. The
+    download happens here, where waiting is expected, instead of there.
+
+    Weights are only fetched. Nothing is generated, so this costs a download
+    and a model load, not inference time.
+    """
+    from .llm import get_llm_provider
+
+    provider = get_llm_provider()
+    if not provider.is_available:
+        print(f"  generation: skipped (provider '{provider.name}')")
+        return True
+
+    print(f"  generation: fetching {provider.model_name} (this is the slow part) ...")
+    started = time.perf_counter()
+    provider.warm_up()
+    print(f"  generation: ready in {time.perf_counter() - started:.0f}s")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -95,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Redo both steps.")
     parser.add_argument("--skip-knowledge", action="store_true")
     parser.add_argument("--skip-model", action="store_true")
+    parser.add_argument(
+        "--skip-generation",
+        action="store_true",
+        help="Do not pre-download the generation model.",
+    )
     args = parser.parse_args(argv)
 
     configure_logging(level=get_settings().log_level, json_output=False)
@@ -116,6 +148,17 @@ def main(argv: list[str] | None = None) -> int:
         except (AIError, ValueError, OSError) as exc:
             print(f"  ml model: FAILED {exc}", file=sys.stderr)
             failures += 1
+
+    if not args.skip_generation:
+        try:
+            ensure_generation_model()
+        except AIError as exc:
+            # A missing generation model is not fatal: retrieval, search and
+            # prediction all keep working without it.
+            print(
+                f"  generation: unavailable [{exc.code}] {exc.message}",
+                file=sys.stderr,
+            )
 
     if failures:
         print(f"\nBootstrap finished with {failures} problem(s).", file=sys.stderr)

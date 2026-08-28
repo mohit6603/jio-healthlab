@@ -113,8 +113,11 @@ services:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-healthlab_knowledge}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-      # The bootstrap never generates text, so it must not pull the LLM.
-      LLM_PROVIDER: none
+      # The bootstrap pre-downloads the generation model so the first user
+      # question does not block for minutes behind a gigabyte download. It
+      # never generates text -- only fetches and loads the weights.
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
     depends_on:
       ai-service:
         condition: service_healthy

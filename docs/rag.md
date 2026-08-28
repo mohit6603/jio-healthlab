@@ -83,7 +83,7 @@ tail of every long chunk.
 Demonstrated in `test_embeddings_integration.py`: text beyond the window leaves
 the vector **identical** (cosine 1.0).
 
-Current corpus: 12 documents → 47 chunks, mean 173 tokens, max 220, zero over
+Current corpus: 14 documents → 56 chunks, mean 173 tokens, max 220, zero over
 the window.
 
 ---
@@ -124,7 +124,7 @@ docker compose exec ai-service python -m evaluation.evaluate_retrieval
 docker compose exec ai-service python -m evaluation.evaluate_rag
 ```
 
-43 hand-written questions across all 12 documents. Expectations were written by
+43 hand-written questions across the knowledge base. Expectations were written by
 reading the documents; a test asserts every expected keyword actually appears
 in its cited source, so they are answerable rather than aspirational.
 

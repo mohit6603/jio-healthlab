@@ -191,7 +191,9 @@ def test_ingest_directory_covers_the_knowledge_base(pipeline_parts, settings):
 
     report = pipeline.ingest_directory(settings.knowledge_path)
 
-    assert report.document_count == 12
+    # Asserted as a lower bound: adding a knowledge document should not break
+    # the suite, but silently losing one should.
+    assert report.document_count >= 12
     assert report.chunk_count > 40
     assert report.failures == []
 

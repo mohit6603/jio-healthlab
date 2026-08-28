@@ -119,7 +119,7 @@ def test_non_utf8_bytes_are_decoded_with_fallback():
 def test_discover_finds_bundled_knowledge(settings):
     paths = discover(settings.knowledge_path)
 
-    assert len(paths) >= 12
+    assert len(paths) >= 14
     assert all(path.suffix in {".md", ".txt", ".pdf"} for path in paths)
 
 
