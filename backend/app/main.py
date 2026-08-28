@@ -7,6 +7,8 @@ them.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,8 +16,9 @@ from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
 from .core.logging import configure_logging, get_logger
 from .core.middleware import RequestContextMiddleware
-from .routers import dashboard, reports, system
+from .routers import ai, dashboard, reports, system
 from .routers.system import APP_VERSION
+from .services.ai_client import close_ai_client
 
 DESCRIPTION = """
 Diagnostics report operations API for **JIO HealthLab**.
@@ -23,6 +26,10 @@ Diagnostics report operations API for **JIO HealthLab**.
 * **Reports** -- create, search, update and track diagnostic orders.
 * **Dashboard** -- aggregated operational metrics.
 * **System** -- liveness probe and service metadata.
+* **AI** -- knowledge assistant and semantic search.
+
+> AI output is informational only. It is **not** a medical diagnosis.
+> An AI outage never affects reports or the dashboard.
 
 Every error response uses the envelope
 `{"error": {"code": "...", "message": "..."}}`.
@@ -32,6 +39,14 @@ OPENAPI_TAGS = [
     {"name": "System", "description": "Health checks and service metadata."},
     {"name": "Reports", "description": "Laboratory report lifecycle."},
     {"name": "Dashboard", "description": "Aggregated operational metrics."},
+    {
+        "name": "AI",
+        "description": (
+            "Knowledge assistant and semantic search, proxied to the "
+            "internal AI service. AI output is informational only and is "
+            "not a medical diagnosis."
+        ),
+    },
 ]
 
 
@@ -42,11 +57,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(level=settings.log_level, json_output=settings.log_json)
     logger = get_logger(__name__)
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        logger.info(
+            "application_started",
+            extra={"environment": settings.environment, "version": APP_VERSION},
+        )
+        yield
+        # Release the pooled AI-service connections on shutdown.
+        await close_ai_client()
+        logger.info("application_stopping")
+
     app = FastAPI(
         title=settings.app_name,
         version=APP_VERSION,
         description=DESCRIPTION,
         openapi_tags=OPENAPI_TAGS,
+        lifespan=lifespan,
     )
 
     app.add_middleware(RequestContextMiddleware)
@@ -63,11 +90,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(system.router)
     app.include_router(reports.router)
     app.include_router(dashboard.router)
+    app.include_router(ai.router)
 
-    logger.info(
-        "application_started",
-        extra={"environment": settings.environment, "version": APP_VERSION},
-    )
     return app
 
 

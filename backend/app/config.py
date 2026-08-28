@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ai_service_url: str = "http://ai-service:8001"
     ai_service_timeout_seconds: float = 60.0
     ai_service_connect_timeout_seconds: float = 5.0
+    #: Health probes must fail fast: the UI polls them, and a hung probe
+    #: would make the whole page feel broken when only AI is down.
+    ai_health_timeout_seconds: float = 3.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
