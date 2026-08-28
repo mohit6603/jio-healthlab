@@ -43,6 +43,7 @@ class StubClient:
         self.fail_on = fail_on
         self.created: list[str] = []
         self.upserted: list[Any] = []
+        self.upsert_collections: list[str] = []
         self.deleted: list[Any] = []
         self.indexes: list[tuple[str, str]] = []
         self.queries: list[dict[str, Any]] = []
@@ -69,6 +70,7 @@ class StubClient:
 
     def upsert(self, collection_name: str, points: list[Any], wait: bool = True) -> None:
         self._maybe_fail("upsert")
+        self.upsert_collections.append(collection_name)
         self.upserted.extend(points)
 
     def query_points(self, **kwargs: Any) -> StubResponse:

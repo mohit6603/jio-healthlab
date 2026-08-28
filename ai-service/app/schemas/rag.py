@@ -30,10 +30,26 @@ class KnowledgeChunk(BaseModel):
         default=None, description="Nearest preceding heading, when one exists."
     )
     text: str = Field(description="The chunk body sent to the model as context.")
+    extra: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Additional filterable payload keys. Used by the report index for "
+            "status, priority, branch and so on. Reserved field names always "
+            "win, so extras cannot shadow citation metadata."
+        ),
+    )
 
     def to_payload(self) -> dict[str, Any]:
-        """Render the Qdrant payload for this chunk."""
-        return self.model_dump()
+        """Render the Qdrant payload for this chunk.
+
+        Extras are flattened to the top level so Qdrant can index and filter
+        them directly, but core fields are written last and therefore cannot be
+        overwritten by an extra of the same name.
+        """
+        payload = dict(self.extra)
+        core = self.model_dump(exclude={"extra"})
+        payload.update(core)
+        return payload
 
 
 class EmbeddedChunk(BaseModel):
@@ -273,3 +289,72 @@ class ExplainRequest(BaseModel):
     )
     top_k: int | None = Field(default=None, ge=1, le=20)
     max_new_tokens: int | None = Field(default=None, ge=16, le=1024)
+
+
+class ReportIndexItem(BaseModel):
+    """One sanitised report to index.
+
+    ``text`` must already be free of patient identifiers -- the backend builds
+    it from operational fields only. This service does not sanitise; it stores
+    what it is given, in a collection kept separate from the knowledge base.
+    """
+
+    report_id: int = Field(gt=0)
+    text: str = Field(
+        min_length=1,
+        max_length=2000,
+        examples=["Urgent CBC Panel at Andheri Hub in Mumbai. Status: processing."],
+    )
+    metadata: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Filterable operational keys. Only status, priority, branch, city "
+            "and test_type are stored; anything else is discarded."
+        ),
+    )
+
+
+class ReportIndexRequest(BaseModel):
+    items: list[ReportIndexItem] = Field(min_length=1, max_length=1000)
+
+
+class ReportIndexResponse(BaseModel):
+    indexed: int
+    collection: str
+
+
+class ReportSearchRequest(BaseModel):
+    """Natural-language search over indexed report metadata."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=1000,
+        examples=["urgent kidney tests waiting in Mumbai"],
+    )
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    status: str | None = None
+    priority: str | None = None
+    branch: str | None = None
+    city: str | None = None
+    test_type: str | None = None
+
+
+class ReportSearchHit(BaseModel):
+    """A semantically matched report."""
+
+    report_id: int
+    score: float
+    text: str = Field(description="The sanitised summary that was matched.")
+
+
+class ReportSearchResponse(BaseModel):
+    query: str
+    results: list[ReportSearchHit] = Field(default_factory=list)
+    retrieval_count: int = 0
+
+
+class ReportIndexStats(BaseModel):
+    collection: str
+    exists: bool
+    indexed_reports: int = 0

@@ -45,6 +45,10 @@ POINT_NAMESPACE = uuid.UUID("6f0b6a3e-6d3a-5c0a-9d2f-2f4a9f0c1e77")
 #: Payload fields that get a keyword index so filtering stays fast.
 _INDEXED_FIELDS = ("document_id", "category", "source")
 
+#: Extra keyword indexes for the report collection, whose filters are
+#: operational rather than bibliographic.
+REPORT_INDEXED_FIELDS = ("status", "priority", "branch", "city", "test_type")
+
 _SCROLL_PAGE = 256
 
 
@@ -94,7 +98,9 @@ class VectorStore:
         return collection or self.knowledge_collection
 
     # -------------------------------------------------------- collection ---
-    def ensure_collection(self, collection: str | None = None) -> str:
+    def ensure_collection(
+        self, collection: str | None = None, *, index_fields: tuple[str, ...] = ()
+    ) -> str:
         """Create the collection and its payload indexes when missing.
 
         Idempotent, and memoised per process so the hot path does not pay for
@@ -120,7 +126,7 @@ class VectorStore:
                         "dimension": self._settings.embedding_dimension,
                     },
                 )
-            self._ensure_indexes(name)
+            self._ensure_indexes(name, index_fields)
         except VectorStoreError:
             raise
         except Exception as exc:
@@ -131,9 +137,11 @@ class VectorStore:
         self._ensured.add(name)
         return name
 
-    def _ensure_indexes(self, collection: str) -> None:
+    def _ensure_indexes(
+        self, collection: str, extra_fields: tuple[str, ...] = ()
+    ) -> None:
         """Add keyword indexes used by document filters and deletes."""
-        for field in _INDEXED_FIELDS:
+        for field in (*_INDEXED_FIELDS, *extra_fields):
             try:
                 self.client.create_payload_index(
                     collection_name=collection,
@@ -160,13 +168,17 @@ class VectorStore:
 
     # ------------------------------------------------------------ upsert ---
     def upsert_chunks(
-        self, chunks: Sequence[EmbeddedChunk], collection: str | None = None
+        self,
+        chunks: Sequence[EmbeddedChunk],
+        collection: str | None = None,
+        *,
+        index_fields: tuple[str, ...] = (),
     ) -> int:
         """Insert or replace ``chunks``. Returns the number of points written."""
         if not chunks:
             return 0
 
-        name = self.ensure_collection(collection)
+        name = self.ensure_collection(collection, index_fields=index_fields)
         points = [
             qmodels.PointStruct(
                 id=point_id(item.chunk.chunk_id),

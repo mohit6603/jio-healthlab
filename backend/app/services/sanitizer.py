@@ -96,3 +96,62 @@ def sanitize_report(report: Report, *, now: datetime | None = None) -> Sanitized
         fields["due_status"] = "overdue" if overdue else "on schedule"
 
     return SanitizedReport(fields=fields, search_text=report.test_type)
+
+
+#: Payload keys the report index may filter on. Kept in step with the AI
+#: service's FILTERABLE_FIELDS.
+#: Trailing words that already make the test name read as a noun phrase.
+_TEST_NOUNS = frozenset({"test", "scan", "panel", "profile", "screen", "x-ray"})
+
+SEARCH_FILTER_FIELDS: tuple[str, ...] = (
+    "status",
+    "priority",
+    "branch",
+    "city",
+    "test_type",
+)
+
+
+def searchable_text(report: Report) -> str:
+    """Build the sentence that represents a report in the semantic index.
+
+    Written as prose rather than key/value pairs because it is embedded: a
+    sentence sits closer in vector space to a natural-language query like
+    "urgent kidney tests waiting in Mumbai" than a field dump does.
+
+    Contains only operational fields. Nothing identifying is ever embedded.
+    """
+    priority = (report.priority or "routine").capitalize()
+    # "Blood Test" already ends in a noun; appending "test" reads badly, and
+    # this string is embedded, so it should read like natural language.
+    name = report.test_type
+    suffix = "" if name.lower().split()[-1] in _TEST_NOUNS else " test"
+    parts = [f"{priority} {name}{suffix}"]
+
+    if report.lab_branch and report.city:
+        parts.append(f"at the {report.lab_branch} branch in {report.city}")
+    elif report.lab_branch:
+        parts.append(f"at the {report.lab_branch} branch")
+    elif report.city:
+        parts.append(f"in {report.city}")
+
+    sentence = " ".join(parts) + "."
+
+    extras = [f"Status: {report.status}." if report.status else ""]
+    if report.priority == "urgent":
+        extras.append("Marked urgent and prioritised in the queue.")
+    extras.append(f"Patient age group {age_band(report.age)}.")
+
+    return " ".join(part for part in [sentence, *extras] if part)
+
+
+def search_metadata(report: Report) -> dict[str, str]:
+    """Exact-match filter keys for one report."""
+    values = {
+        "status": report.status,
+        "priority": report.priority,
+        "branch": report.lab_branch,
+        "city": report.city,
+        "test_type": report.test_type,
+    }
+    return {key: str(value) for key, value in values.items() if value}

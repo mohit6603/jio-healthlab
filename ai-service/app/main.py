@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import documents, health, ml, rag
+from .api import documents, health, ml, rag, report_search
 from .api.health import APP_VERSION
 from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
@@ -37,6 +37,13 @@ OPENAPI_TAGS = [
     {"name": "RAG", "description": "Semantic search and grounded question answering."},
     {"name": "Documents", "description": "Knowledge-base document lifecycle."},
     {"name": "ML", "description": "Predictive models for lab operations."},
+    {
+        "name": "Report search",
+        "description": (
+            "Semantic search over sanitised report metadata, in a "
+            "collection kept separate from the knowledge base."
+        ),
+    },
 ]
 
 
@@ -77,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(documents.router)
     app.include_router(rag.router)
     app.include_router(ml.router)
+    app.include_router(report_search.router)
 
     return app
 

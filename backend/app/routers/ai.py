@@ -19,11 +19,16 @@ from ..schemas.ai import (
     AIHealthResponse,
     ChatRequest,
     ChatResponse,
+    ReportIndexResponse,
+    ReportSearchMatch,
+    ReportSearchRequest,
+    ReportSearchResponse,
     RiskAnalyticsResponse,
     SearchRequest,
     SearchResponse,
 )
-from ..services import risk_service
+from ..schemas.report import ReportRead
+from ..services import report_search_service, risk_service
 from ..services.ai_client import AIServiceClient, get_ai_client
 
 router = APIRouter(prefix="/api/ai", tags=["AI"], responses=ERROR_RESPONSES)
@@ -127,3 +132,75 @@ async def risk_analytics(
         ),
     )
     return RiskAnalyticsResponse(**asdict(analytics))
+
+
+@router.post(
+    "/report-search",
+    response_model=ReportSearchResponse,
+    summary="Search reports in natural language",
+    description=(
+        "Matches a phrase such as *urgent kidney tests waiting in Mumbai* "
+        "against the semantic report index, then returns the full report "
+        "records for the matches.\n\n"
+        "Only sanitised summaries are embedded -- operational fields, an age "
+        "band, no names or contact details. The vector store holds report ids "
+        "and that summary; the records themselves come from the database. "
+        "Optional exact filters narrow the search further.\n\n"
+        "Returns **503** when the AI service or the index is unavailable; "
+        "keyword search on `GET /api/reports` is unaffected."
+    ),
+)
+async def report_search(
+    payload: ReportSearchRequest, db: DbSession, client: AIClientDep
+) -> ReportSearchResponse:
+    result = await client.search_reports(
+        payload.query,
+        top_k=payload.top_k,
+        status=payload.status,
+        priority=payload.priority,
+        branch=payload.branch,
+        city=payload.city,
+        test_type=payload.test_type,
+    )
+
+    rows = report_search_service.hydrate(db, result.get("results", []))
+    return ReportSearchResponse(
+        query=payload.query.strip(),
+        results=[
+            ReportSearchMatch(
+                report=ReportRead.model_validate(row["report"]),
+                score=row["score"],
+                matched_summary=row["matched_summary"],
+            )
+            for row in rows
+        ],
+        retrieval_count=len(rows),
+    )
+
+
+@router.post(
+    "/report-index",
+    response_model=ReportIndexResponse,
+    summary="Rebuild the semantic report index",
+    description=(
+        "Sanitises reports and pushes their summaries to the AI service. "
+        "Re-indexing a report replaces its vector rather than duplicating it, "
+        "so this is safe to re-run.\n\n"
+        "An administrative operation: it decides what report search can find."
+    ),
+)
+async def rebuild_report_index(
+    db: DbSession,
+    client: AIClientDep,
+    limit: int = Query(default=500, ge=1, le=1000),
+) -> ReportIndexResponse:
+    reports = report_search_service.reports_to_index(db, limit)
+    if not reports:
+        return ReportIndexResponse(indexed=0, collection="")
+
+    payload = [report_search_service.index_payload(report) for report in reports]
+    result = await client.index_reports(payload)
+    return ReportIndexResponse(
+        indexed=int(result.get("indexed", 0)),
+        collection=str(result.get("collection", "")),
+    )

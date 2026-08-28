@@ -8,6 +8,8 @@ malformed response reaching the browser.
 
 from pydantic import BaseModel, Field
 
+from .report import ReportRead
+
 
 class Citation(BaseModel):
     """A knowledge-base source an answer was grounded in."""
@@ -204,3 +206,45 @@ class RiskAnalyticsResponse(BaseModel):
     by_branch: list[RiskGroup] = Field(default_factory=list)
     by_test_type: list[RiskGroup] = Field(default_factory=list)
     reports: list[ReportRisk] = Field(default_factory=list)
+
+
+class ReportSearchRequest(BaseModel):
+    """Natural-language search over lab reports."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=1000,
+        examples=["urgent kidney tests waiting in Mumbai"],
+    )
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    status: str | None = None
+    priority: str | None = None
+    branch: str | None = None
+    city: str | None = None
+    test_type: str | None = None
+
+
+class ReportSearchMatch(BaseModel):
+    """A semantically matched report, joined back to its full record."""
+
+    report: ReportRead
+    score: float = Field(description="Cosine similarity of the match.")
+    matched_summary: str = Field(
+        description=(
+            "The sanitised summary that was embedded and matched. Shown so a "
+            "user can see why a report was returned."
+        )
+    )
+
+
+class ReportSearchResponse(BaseModel):
+    query: str
+    results: list[ReportSearchMatch] = Field(default_factory=list)
+    retrieval_count: int = 0
+
+
+class ReportIndexResponse(BaseModel):
+    """Result of rebuilding the semantic report index."""
+
+    indexed: int
+    collection: str

@@ -223,6 +223,23 @@ class AIServiceClient:
             "POST", "/ml/predict-delay/batch", json={"items": items}
         )
 
+    async def index_reports(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Push sanitised report summaries into the semantic index."""
+        return await self._request("POST", "/reports/index", json={"items": items})
+
+    async def search_reports(
+        self, query: str, *, top_k: int | None = None, **filters: str | None
+    ) -> dict[str, Any]:
+        """Semantic search over indexed report summaries."""
+        return await self._request(
+            "POST",
+            "/reports/search",
+            json=_compact({"query": query, "top_k": top_k, **filters}),
+        )
+
+    async def report_index_stats(self) -> dict[str, Any]:
+        return await self._request("GET", "/reports/index/stats")
+
     async def explain_report(
         self,
         report_summary: str,
