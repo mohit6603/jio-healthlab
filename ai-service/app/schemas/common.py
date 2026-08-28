@@ -55,3 +55,16 @@ class ModelsResponse(BaseModel):
     """Payload returned by ``GET /models``."""
 
     models: list[ModelInfo]
+
+
+class ReadinessResponse(BaseModel):
+    """Payload returned by ``GET /health/ready``.
+
+    Separate from ``/health`` on purpose: liveness must never fail because a
+    downstream dependency is down, or an orchestrator would restart a process
+    that is working perfectly well. Readiness is where dependency probes live.
+    """
+
+    status: Literal["ready", "degraded", "not_ready"]
+    service: str = "ai-service"
+    components: list[ComponentHealth] = Field(default_factory=list)

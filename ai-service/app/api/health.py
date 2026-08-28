@@ -11,14 +11,16 @@ from fastapi import APIRouter
 
 from ..config import Settings
 from ..core import runtime
+from ..rag.vector_store import VectorStore
 from ..schemas.common import (
     ComponentHealth,
     HealthResponse,
     ModelInfo,
     ModelsResponse,
+    ReadinessResponse,
 )
 from ..utils.optional import is_installed
-from .deps import SettingsDep
+from .deps import SettingsDep, VectorStoreDep
 
 router = APIRouter(tags=["System"])
 
@@ -27,6 +29,9 @@ APP_VERSION = "1.0.0"
 #: Import name -> human label, for dependency probes.
 _EMBEDDING_MODULE = "sentence_transformers"
 _GENERATION_MODULE = "transformers"
+
+#: Without these, no retrieval is possible and the service is not ready.
+_REQUIRED_COMPONENTS = frozenset({"embedding_model", "vector_store"})
 
 
 @router.get(
@@ -64,6 +69,58 @@ def health(settings: SettingsDep) -> HealthResponse:
 )
 def models(settings: SettingsDep) -> ModelsResponse:
     return ModelsResponse(models=_model_info(settings))
+
+
+@router.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    summary="Readiness probe",
+    description=(
+        "Actively probes downstream dependencies (Qdrant) as well as local "
+        "model availability. Kept separate from `/health` so a vector-store "
+        "outage never causes an orchestrator to restart a healthy process."
+    ),
+)
+def readiness(settings: SettingsDep, store: VectorStoreDep) -> ReadinessResponse:
+    components = _component_health(settings)
+    components.append(_vector_store_health(store))
+
+    states = {item.state for item in components}
+    if "unavailable" in {
+        item.state for item in components if item.name in _REQUIRED_COMPONENTS
+    }:
+        status_value: str = "not_ready"
+    elif states & {"unavailable", "degraded"}:
+        status_value = "degraded"
+    else:
+        status_value = "ready"
+
+    return ReadinessResponse(status=status_value, components=components)  # type: ignore[arg-type]
+
+
+def _vector_store_health(store: VectorStore) -> ComponentHealth:
+    """Probe Qdrant without raising -- readiness reports, it does not fail."""
+    report = store.health()
+    if not report.reachable:
+        return ComponentHealth(
+            name="vector_store", state="unavailable", detail=report.detail
+        )
+    if not report.collection_exists:
+        return ComponentHealth(
+            name="vector_store",
+            state="degraded",
+            detail=(
+                f"Collection '{report.collection}' does not exist yet. "
+                "Run `python -m app.rag.ingest` to build the knowledge index."
+            ),
+        )
+    if report.vector_count == 0:
+        return ComponentHealth(
+            name="vector_store",
+            state="degraded",
+            detail=f"Collection '{report.collection}' is empty.",
+        )
+    return ComponentHealth(name="vector_store", state="ok")
 
 
 def _component_health(settings: Settings) -> list[ComponentHealth]:

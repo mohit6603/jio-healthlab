@@ -115,3 +115,86 @@ def test_endpoints_do_not_load_weights(client):
     assert not runtime.is_loaded(runtime.EMBEDDING)
     assert not runtime.is_loaded(runtime.GENERATION)
     assert not runtime.is_loaded(runtime.DELAY_MODEL)
+
+
+# ------------------------------------------------------------ readiness ----
+class _FakeStore:
+    """Stands in for the vector store in readiness tests."""
+
+    def __init__(self, **kwargs):
+        from app.schemas.rag import VectorStoreHealth
+
+        defaults = {
+            "reachable": True,
+            "collection": "test_knowledge",
+            "collection_exists": True,
+            "vector_count": 12,
+        }
+        self._report = VectorStoreHealth(**{**defaults, **kwargs})
+
+    def health(self, collection=None):
+        return self._report
+
+
+def _ready_client(client, store):
+    from app.rag.vector_store import get_vector_store
+
+    client.app.dependency_overrides[get_vector_store] = lambda: store
+    return client
+
+
+def test_readiness_is_ready_when_everything_is_up(client, monkeypatch):
+    monkeypatch.setattr("app.api.health.is_installed", lambda _: True)
+    _ready_client(client, _FakeStore())
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "ready"
+    assert {item["name"] for item in body["components"]} == {
+        "embedding_model",
+        "generation_model",
+        "vector_store",
+    }
+
+
+def test_readiness_not_ready_when_qdrant_is_unreachable(client, monkeypatch):
+    monkeypatch.setattr("app.api.health.is_installed", lambda _: True)
+    _ready_client(client, _FakeStore(reachable=False, detail="connection refused"))
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "not_ready"
+    store = next(i for i in body["components"] if i["name"] == "vector_store")
+    assert store["state"] == "unavailable"
+
+
+def test_readiness_degraded_when_collection_missing(client, monkeypatch):
+    monkeypatch.setattr("app.api.health.is_installed", lambda _: True)
+    _ready_client(client, _FakeStore(collection_exists=False, vector_count=0))
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "degraded"
+    store = next(i for i in body["components"] if i["name"] == "vector_store")
+    assert "ingest" in store["detail"]
+
+
+def test_readiness_degraded_when_collection_empty(client, monkeypatch):
+    monkeypatch.setattr("app.api.health.is_installed", lambda _: True)
+    _ready_client(client, _FakeStore(vector_count=0))
+
+    body = client.get("/health/ready").json()
+
+    assert body["status"] == "degraded"
+
+
+def test_liveness_never_probes_the_vector_store(client):
+    """A Qdrant outage must not make /health fail -- only /health/ready."""
+
+    class Exploding:
+        def health(self, collection=None):
+            raise AssertionError("/health must not touch the vector store")
+
+    _ready_client(client, Exploding())
+
+    assert client.get("/health").status_code == 200
