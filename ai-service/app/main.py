@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import health
+from .api import documents, health
 from .api.health import APP_VERSION
 from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
@@ -74,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app, production=settings.is_production)
 
     app.include_router(health.router)
+    app.include_router(documents.router)
 
     return app
 

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     #: Cosine similarity assumes unit-length vectors.
     embedding_normalize: bool = True
     embedding_device: str = "cpu"
+    #: Hard input limit of ``embedding_model``. all-MiniLM-L6-v2 truncates at
+    #: 256 word pieces (verified against the loaded model).
+    embedding_max_tokens: int = 256
 
     # ---------------------------------------------------------------- llm ---
     #: ``local`` (Hugging Face Transformers) or ``none`` to disable generation
@@ -57,8 +60,11 @@ class Settings(BaseSettings):
     top_k: int = 5
     #: Chunks scoring below this are discarded before prompt construction.
     score_threshold: float = 0.25
-    chunk_size: int = 500
-    chunk_overlap: int = 75
+    #: Approximate tokens per chunk. Kept just under ``embedding_max_tokens``:
+    #: anything longer is truncated by the embedding model before the vector is
+    #: computed, so the tail of a larger chunk would never affect retrieval.
+    chunk_size: int = 220
+    chunk_overlap: int = 40
 
     # ---------------------------------------------------------- knowledge ---
     knowledge_dir: str = str(SERVICE_ROOT / "knowledge")

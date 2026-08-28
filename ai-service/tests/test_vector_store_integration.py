@@ -8,6 +8,7 @@ stays hermetic::
 
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
 
@@ -52,10 +53,8 @@ def store_fixture():
     store = VectorStore(settings=settings)
     yield store
     for name in (collection, f"{collection}_reports"):
-        try:
+        with contextlib.suppress(Exception):  # best-effort cleanup
             store.drop_collection(name)
-        except Exception:  # noqa: BLE001 - best-effort cleanup
-            pass
     store.close()
 
 

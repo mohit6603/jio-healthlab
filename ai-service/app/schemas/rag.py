@@ -87,3 +87,40 @@ class VectorStoreHealth(BaseModel):
     vector_count: int = 0
     detail: str | None = None
     checked_at: datetime | None = None
+
+
+class IngestedDocument(BaseModel):
+    """Result of ingesting one document."""
+
+    document_id: str
+    title: str
+    source: str
+    category: str
+    chunks_written: int
+    chunks_replaced: int = 0
+    duration_ms: float = 0.0
+
+
+class IngestResponse(BaseModel):
+    """Payload returned by ``POST /documents/ingest``."""
+
+    documents: list[IngestedDocument]
+    failures: list[dict[str, str]] = Field(default_factory=list)
+    total_chunks: int = 0
+    duration_ms: float = 0.0
+
+
+class DocumentListResponse(BaseModel):
+    """Payload returned by ``GET /documents``."""
+
+    collection: str
+    document_count: int
+    vector_count: int
+    documents: list[DocumentSummary]
+
+
+class DocumentDeleteResponse(BaseModel):
+    """Payload returned by ``DELETE /documents/{document_id}``."""
+
+    document_id: str
+    chunks_deleted: int

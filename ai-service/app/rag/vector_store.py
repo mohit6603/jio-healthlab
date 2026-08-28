@@ -237,6 +237,10 @@ class VectorStore:
         assert selector is not None  # a document_id filter always builds
 
         try:
+            # Deleting from a collection that was never created is not an
+            # error -- nothing was indexed, so nothing needs removing.
+            if not self.client.collection_exists(name):
+                return 0
             existing = self.client.count(
                 collection_name=name, count_filter=selector, exact=True
             ).count

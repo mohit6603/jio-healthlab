@@ -313,6 +313,7 @@ def test_search_wraps_driver_failure(settings):
 # ----------------------------------------------------------- delete --------
 def test_delete_document_filters_by_document_id(store_and_client):
     store, client = store_and_client
+    client.existing = True
     client.count_value = 4
 
     removed = store.delete_document("cbc")
@@ -325,6 +326,7 @@ def test_delete_document_filters_by_document_id(store_and_client):
 
 def test_delete_document_skips_when_nothing_indexed(store_and_client):
     store, client = store_and_client
+    client.existing = True
     client.count_value = 0
 
     assert store.delete_document("missing") == 0
@@ -332,10 +334,20 @@ def test_delete_document_skips_when_nothing_indexed(store_and_client):
 
 
 def test_delete_document_wraps_driver_failure(settings):
-    store = VectorStore(settings=settings, client=StubClient(fail_on="count"))
+    client = StubClient(existing=True, fail_on="count")
+    store = VectorStore(settings=settings, client=client)
 
     with pytest.raises(VectorStoreError):
         store.delete_document("cbc")
+
+
+def test_delete_document_on_missing_collection_returns_zero(store_and_client):
+    """Ingesting into a fresh deployment deletes before the collection exists."""
+    store, client = store_and_client
+    client.existing = False
+
+    assert store.delete_document("cbc") == 0
+    assert client.deleted == []
 
 
 # ------------------------------------------------------------ browse -------
