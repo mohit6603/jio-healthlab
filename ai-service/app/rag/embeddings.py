@@ -89,7 +89,12 @@ class SentenceTransformerEmbedder:
     # ------------------------------------------------------------ loading --
     def _load(self):
         """Load the model once, recording success or failure for /health."""
+        from ..core import runtime as _runtime
+
         if self._model is not None:
+            # Keep the registry consistent with reality (see local_transformer).
+            if not _runtime.is_loaded(_runtime.EMBEDDING):
+                _runtime.mark_loaded(_runtime.EMBEDDING)
             return self._model
 
         from ..core import runtime

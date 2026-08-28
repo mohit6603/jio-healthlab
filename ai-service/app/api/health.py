@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from ..config import Settings
 from ..core import runtime
+from ..llm import LLMProvider
 from ..rag.vector_store import VectorStore
 from ..schemas.common import (
     ComponentHealth,
@@ -20,7 +21,7 @@ from ..schemas.common import (
     ReadinessResponse,
 )
 from ..utils.optional import is_installed
-from .deps import SettingsDep, VectorStoreDep
+from .deps import LLMProviderDep, SettingsDep, VectorStoreDep
 
 router = APIRouter(tags=["System"])
 
@@ -67,8 +68,8 @@ def health(settings: SettingsDep) -> HealthResponse:
         "configured to use, and whether their weights are currently resident."
     ),
 )
-def models(settings: SettingsDep) -> ModelsResponse:
-    return ModelsResponse(models=_model_info(settings))
+def models(settings: SettingsDep, provider: LLMProviderDep) -> ModelsResponse:
+    return ModelsResponse(models=_model_info(settings, provider))
 
 
 @router.get(
@@ -175,7 +176,7 @@ def _component_health(settings: Settings) -> list[ComponentHealth]:
     return components
 
 
-def _model_info(settings: Settings) -> list[ModelInfo]:
+def _model_info(settings: Settings, provider: LLMProvider) -> list[ModelInfo]:
     embedding_available = is_installed(_EMBEDDING_MODULE)
     generation_installed = is_installed(_GENERATION_MODULE)
 
@@ -197,10 +198,10 @@ def _model_info(settings: Settings) -> list[ModelInfo]:
         ),
         ModelInfo(
             role="generation",
-            name=settings.llm_model,
-            provider=settings.llm_provider,
-            loaded=runtime.is_loaded(runtime.GENERATION),
-            available=settings.generation_enabled and generation_installed,
+            name=provider.model_name,
+            provider=provider.name,
+            loaded=provider.is_loaded,
+            available=provider.is_available,
             device=settings.llm_device,
             detail=_generation_detail(settings, generation_installed),
         ),

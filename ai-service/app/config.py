@@ -40,11 +40,28 @@ class Settings(BaseSettings):
     #: ``local`` (Hugging Face Transformers) or ``none`` to disable generation
     #: entirely while keeping retrieval available.
     llm_provider: str = "local"
-    llm_model: str = "Qwen/Qwen2.5-1.5B"
-    llm_max_new_tokens: int = 320
+    #: Instruction-tuned by necessity, and small by default.
+    #:
+    #: Measured on CPU in this image:
+    #:   Qwen2.5-1.5B (base)      1.0 tok/s -- echoes the prompt and loops;
+    #:                            a base model does not follow RAG instructions
+    #:   Qwen2.5-1.5B-Instruct    1.1 tok/s -- correct answers, ~37s each
+    #:   Qwen2.5-0.5B-Instruct    4.4 tok/s -- correct answers, ~5s each
+    #: The 0.5B instruct model is the default so the stack is usable on a
+    #: laptop; set LLM_MODEL to the 1.5B instruct variant where more compute
+    #: is available.
+    llm_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    llm_max_new_tokens: int = 256
     llm_temperature: float = 0.2
     llm_top_p: float = 0.9
     llm_device: str = "cpu"
+    #: Wall-clock budget for one generation. CPU inference on a 1.5B model runs
+    #: at a few tokens per second, so an unbounded request can hold a worker
+    #: for minutes; generation stops here and reports finish_reason="timeout".
+    llm_timeout_seconds: float = 90.0
+    #: Context budget for the prompt. The answer allowance is subtracted from
+    #: this before the prompt is truncated.
+    llm_max_input_tokens: int = 2048
     #: Load the generation model at startup instead of on first use. Off by
     #: default so the container becomes healthy without waiting on a download.
     llm_eager_load: bool = False
