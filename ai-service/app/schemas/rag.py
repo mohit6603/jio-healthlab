@@ -124,3 +124,58 @@ class DocumentDeleteResponse(BaseModel):
 
     document_id: str
     chunks_deleted: int
+
+
+class SearchRequest(BaseModel):
+    """Request body for ``POST /rag/search``."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Natural-language question to search the knowledge base with.",
+        examples=["What does a CBC test measure?"],
+    )
+    top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="Maximum chunks to return. Defaults to TOP_K.",
+    )
+    score_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum cosine similarity. Chunks below this are dropped. "
+            "Defaults to SCORE_THRESHOLD."
+        ),
+    )
+    category: str | None = Field(
+        default=None,
+        description="Restrict to one knowledge area, e.g. ``lab_tests``.",
+    )
+    document_id: str | None = Field(
+        default=None, description="Restrict to a single document."
+    )
+    source: str | None = Field(
+        default=None, description="Restrict to a single source filename."
+    )
+
+
+class RetrievalTimings(BaseModel):
+    """Latency breakdown for one retrieval, in milliseconds."""
+
+    embed_ms: float
+    search_ms: float
+    total_ms: float
+
+
+class SearchResponse(BaseModel):
+    """Ranked results for ``POST /rag/search``."""
+
+    query: str
+    results: list[SearchHit]
+    retrieval_count: int = Field(description="Number of chunks returned.")
+    top_k: int = Field(description="Limit actually applied.")
+    score_threshold: float = Field(description="Threshold actually applied.")
+    timings: RetrievalTimings

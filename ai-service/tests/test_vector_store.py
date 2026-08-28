@@ -105,7 +105,9 @@ def make_chunk(index: int = 0, document_id: str = "cbc") -> KnowledgeChunk:
         chunk_id=f"{document_id}::{index}",
         chunk_index=index,
         title="Complete Blood Count Guide",
-        source="cbc.md",
+        # Derived, not hardcoded: tests that group by source need distinct
+        # sources for distinct documents.
+        source=f"{document_id}.md",
         category="lab_tests",
         section="What it measures",
         text="A CBC measures red blood cells, white blood cells and platelets.",
