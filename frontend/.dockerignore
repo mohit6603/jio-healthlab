@@ -1,4 +1,13 @@
 node_modules/
 dist/
+coverage/
 .env
+.env.*
+!.env.example
 *.log
+.vite/
+# Tests and configs are not needed to build the bundle.
+**/*.test.ts
+**/*.test.tsx
+src/test/
+vitest.config.ts
