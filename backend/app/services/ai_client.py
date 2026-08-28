@@ -211,6 +211,31 @@ class AIServiceClient:
             json=_compact({"query": query, "top_k": top_k, "category": category}),
         )
 
+    async def explain_report(
+        self,
+        report_summary: str,
+        *,
+        search_text: str,
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
+        """Explain a laboratory request.
+
+        ``report_summary`` must already have passed through
+        :func:`app.services.sanitizer.sanitize_report`. This method does not
+        sanitise -- it is the transport, not the boundary.
+        """
+        return await self._request(
+            "POST",
+            "/rag/explain",
+            json=_compact(
+                {
+                    "report_summary": report_summary,
+                    "search_text": search_text,
+                    "top_k": top_k,
+                }
+            ),
+        )
+
 
 def _compact(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop unset optional fields so the AI service applies its own defaults."""

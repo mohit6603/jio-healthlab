@@ -1,10 +1,14 @@
 """Laboratory report endpoints."""
 
-from fastapi import APIRouter, Query, status
+from typing import Annotated
 
-from ..core.errors import NOT_FOUND_RESPONSE
+from fastapi import APIRouter, Body, Depends, Query, status
+
+from ..core.errors import ERROR_RESPONSES, NOT_FOUND_RESPONSE
+from ..core.logging import get_logger
 from ..dependencies import DbSession
 from ..models import Report
+from ..schemas.ai import Citation, ExplainRequest, ReportExplanation
 from ..schemas.report import (
     ReportCreate,
     ReportFilters,
@@ -12,6 +16,12 @@ from ..schemas.report import (
     ReportUpdate,
 )
 from ..services import report_service
+from ..services.ai_client import AIServiceClient, get_ai_client
+from ..services.sanitizer import sanitize_report
+
+logger = get_logger(__name__)
+
+AIClientDep = Annotated[AIServiceClient, Depends(get_ai_client)]
 
 router = APIRouter(prefix="/api", tags=["Reports"])
 
@@ -93,3 +103,62 @@ def update_report(report_id: int, payload: ReportUpdate, db: DbSession) -> Repor
 )
 def delete_report(report_id: int, db: DbSession) -> None:
     report_service.delete_report(db, report_id)
+
+
+@router.post(
+    "/reports/{report_id}/explain",
+    response_model=ReportExplanation,
+    tags=["AI"],
+    responses={**ERROR_RESPONSES, **NOT_FOUND_RESPONSE},
+    summary="Explain what a report's test measures",
+    description=(
+        "Explains the requested test in general terms, grounded in the "
+        "laboratory knowledge base.\n\n"
+        "**No patient identifier is sent.** The report is reduced to a "
+        "non-identifying summary first -- test type, status, priority, city, "
+        "branch and a ten-year age band. Patient name, phone, email, doctor "
+        "name and free-text notes never leave this service. The exact payload "
+        "that was sent is returned as `context_sent` so the boundary is "
+        "auditable from the response.\n\n"
+        "The explanation is informational and contains no diagnosis or "
+        "interpretation of this individual's results."
+    ),
+)
+async def explain_report(
+    report_id: int,
+    db: DbSession,
+    client: AIClientDep,
+    payload: ExplainRequest = Body(default_factory=ExplainRequest),
+) -> ReportExplanation:
+    report = report_service.get_report(db, report_id)
+    sanitized = sanitize_report(report)
+
+    logger.info(
+        "report_explanation_requested",
+        extra={
+            "report_id": report_id,
+            "test_type": report.test_type,
+            "fields_sent": sorted(sanitized.fields),
+        },
+    )
+
+    result = await client.explain_report(
+        sanitized.render(),
+        search_text=sanitized.search_text,
+        top_k=payload.top_k,
+    )
+
+    return ReportExplanation(
+        report_id=report_id,
+        test_type=report.test_type,
+        answer=result.get("answer", ""),
+        sources=[Citation(**source) for source in result.get("sources", [])],
+        retrieval_count=result.get("retrieval_count", 0),
+        grounded=result.get("grounded", False),
+        disclaimer=result.get("disclaimer", ""),
+        model=result.get("model", ""),
+        provider=result.get("provider", ""),
+        finish_reason=result.get("finish_reason", ""),
+        timings=result.get("timings", {}),
+        context_sent=sanitized.fields,
+    )

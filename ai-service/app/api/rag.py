@@ -15,6 +15,7 @@ from ..rag.retriever import Retriever, build_filters
 from ..schemas.rag import (
     AnswerTimings,
     Citation,
+    ExplainRequest,
     QueryRequest,
     QueryResponse,
     RetrievalTimings,
@@ -131,3 +132,34 @@ def to_query_response(result: RagAnswer) -> QueryResponse:
             total_ms=result.total_ms,
         ),
     )
+
+
+@router.post(
+    "/explain",
+    response_model=QueryResponse,
+    summary="Explain a laboratory request in general terms",
+    description=(
+        "Explains what the requested test measures and what its terminology "
+        "means, grounded in the knowledge base.\n\n"
+        "`report_summary` **must already be sanitised** -- this service never "
+        "receives patient identifiers. The prompt instructs the model to "
+        "describe the test in general terms only and to state no finding or "
+        "interpretation for the individual, and the same clinical screening "
+        "applied to `/rag/query` applies here."
+    ),
+)
+def explain(
+    payload: ExplainRequest,
+    settings: SettingsDep,
+    store: VectorStoreDep,
+    embedder: EmbedderDep,
+    provider: LLMProviderDep,
+) -> QueryResponse:
+    pipeline = RagPipeline(Retriever(embedder, store, settings), provider, settings)
+    result = pipeline.explain_report(
+        payload.report_summary,
+        search_text=payload.search_text,
+        top_k=payload.top_k,
+        max_new_tokens=payload.max_new_tokens,
+    )
+    return to_query_response(result)

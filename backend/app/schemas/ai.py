@@ -111,3 +111,35 @@ class AIHealthResponse(BaseModel):
     status: str = Field(description="``ok``, ``degraded`` or ``unreachable``.")
     detail: str | None = None
     components: list[AIComponent] = Field(default_factory=list)
+
+
+class ExplainRequest(BaseModel):
+    """Options for explaining a report. The report itself comes from the path."""
+
+    top_k: int | None = Field(
+        default=None, ge=1, le=20, description="Knowledge chunks to retrieve."
+    )
+
+
+class ReportExplanation(BaseModel):
+    """AI explanation of what a report's test measures.
+
+    Describes the test in general terms. It contains no finding, result or
+    clinical interpretation for the individual, and no patient identifier was
+    sent to produce it.
+    """
+
+    report_id: int
+    test_type: str
+    answer: str
+    sources: list[Citation] = Field(default_factory=list)
+    retrieval_count: int = 0
+    grounded: bool
+    disclaimer: str
+    model: str = ""
+    provider: str = ""
+    finish_reason: str = ""
+    timings: AnswerTimings = Field(default_factory=AnswerTimings)
+    #: Exactly what was sent to the AI service, so the boundary is auditable
+    #: from the response itself.
+    context_sent: dict[str, str] = Field(default_factory=dict)

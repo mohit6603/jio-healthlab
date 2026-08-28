@@ -246,3 +246,30 @@ class QueryResponse(BaseModel):
     )
     prompt_truncated: bool = False
     timings: AnswerTimings
+
+
+class ExplainRequest(BaseModel):
+    """Request body for ``POST /rag/explain``.
+
+    ``report_summary`` must already be sanitised by the caller. The AI service
+    never receives a raw report: the backend owns the patient record and the
+    PII boundary sits there, before the network hop.
+    """
+
+    report_summary: str = Field(
+        min_length=1,
+        max_length=2000,
+        description=(
+            "Non-identifying key/value description of the request, e.g. "
+            "`test_type: CBC Panel\\npriority: urgent`."
+        ),
+        examples=["test_type: CBC Panel\npriority: urgent\nage_group: 30-39"],
+    )
+    search_text: str = Field(
+        min_length=1,
+        max_length=200,
+        description="What to search the knowledge base with, typically the test name.",
+        examples=["CBC Panel"],
+    )
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    max_new_tokens: int | None = Field(default=None, ge=16, le=1024)
