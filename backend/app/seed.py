@@ -2,8 +2,11 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .database import SessionLocal
 from .models import Report
+from .security import Role
+from .services import auth_service
 
 SEED_REPORTS = [
     {
@@ -90,11 +93,51 @@ def seed_database(db: Session) -> int:
     return len(SEED_REPORTS)
 
 
+#: Demo accounts, one per role, so RBAC can be exercised immediately.
+#: Passwords are development-only and are refused in production by
+#: Settings.assert_production_ready().
+SEED_USERS = [
+    ("admin@jiohealthlab.example.com", "Priya Admin", Role.ADMIN),
+    ("tech@jiohealthlab.example.com", "Ravi Technician", Role.LAB_TECH),
+    ("doctor@jiohealthlab.example.com", "Dr Meera Iyer", Role.DOCTOR),
+    ("viewer@jiohealthlab.example.com", "Sam Viewer", Role.VIEWER),
+]
+
+
+def seed_users(db: Session) -> int:
+    """Create the demo accounts if they do not exist. Idempotent."""
+    settings = get_settings()
+    created = 0
+
+    for email, full_name, role in SEED_USERS:
+        if auth_service.get_user_by_email(db, email) is not None:
+            continue
+        # One shared development password across the demo accounts; the
+        # production guard refuses to start if it is still the default.
+        auth_service.create_user(
+            db,
+            email=email,
+            full_name=full_name,
+            password=settings.seed_admin_password,
+            role=role,
+        )
+        created += 1
+
+    return created
+
+
 def main() -> None:
     db = SessionLocal()
     try:
         created = seed_database(db)
         print(f"Seeded {created} report(s).")
+        users = seed_users(db)
+        print(f"Seeded {users} user(s).")
+        if users:
+            print(
+                "  Demo accounts (development only): "
+                + ", ".join(email for email, _, _ in SEED_USERS)
+            )
     finally:
         db.close()
 

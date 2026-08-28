@@ -16,7 +16,7 @@ from .config import Settings, get_settings
 from .core.errors import register_exception_handlers
 from .core.logging import configure_logging, get_logger
 from .core.middleware import RequestContextMiddleware
-from .routers import ai, dashboard, reports, system
+from .routers import ai, auth, dashboard, reports, system
 from .routers.system import APP_VERSION
 from .services.ai_client import close_ai_client
 
@@ -25,6 +25,7 @@ Diagnostics report operations API for **JIO HealthLab**.
 
 * **Reports** -- create, search, update and track diagnostic orders.
 * **Dashboard** -- aggregated operational metrics.
+* **Authentication** -- sign in, rotate a session, inspect permissions.
 * **System** -- liveness probe and service metadata.
 * **AI** -- knowledge assistant and semantic search.
 
@@ -33,10 +34,21 @@ Diagnostics report operations API for **JIO HealthLab**.
 
 Every error response uses the envelope
 `{"error": {"code": "...", "message": "..."}}`.
+
+Except for `/health`, `/` and `/api/auth/login`, every endpoint requires
+a bearer access token from `POST /api/auth/login`. Authorisation is by
+permission, granted through the caller's role.
 """
 
 OPENAPI_TAGS = [
     {"name": "System", "description": "Health checks and service metadata."},
+    {
+        "name": "Authentication",
+        "description": (
+            "Sign-in, session rotation and user administration. All other "
+            "endpoints require a bearer access token."
+        ),
+    },
     {"name": "Reports", "description": "Laboratory report lifecycle."},
     {"name": "Dashboard", "description": "Aggregated operational metrics."},
     {
@@ -53,6 +65,8 @@ OPENAPI_TAGS = [
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build a configured FastAPI application."""
     settings = settings or get_settings()
+    # Fail fast rather than run production with a placeholder signing key.
+    settings.assert_production_ready()
 
     configure_logging(level=settings.log_level, json_output=settings.log_json)
     logger = get_logger(__name__)
@@ -88,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app, production=settings.is_production)
 
     app.include_router(system.router)
+    app.include_router(auth.router)
     app.include_router(reports.router)
     app.include_router(dashboard.router)
     app.include_router(ai.router)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 
 from ..core.errors import ERROR_RESPONSES, NOT_FOUND_RESPONSE
 from ..core.logging import get_logger
-from ..dependencies import DbSession
+from ..dependencies import DbSession, Requires
 from ..models import Report
 from ..schemas.ai import Citation, ExplainRequest, ReportExplanation
 from ..schemas.report import (
@@ -15,6 +15,7 @@ from ..schemas.report import (
     ReportRead,
     ReportUpdate,
 )
+from ..security import Permission
 from ..services import report_service
 from ..services.ai_client import AIServiceClient, get_ai_client
 from ..services.sanitizer import sanitize_report
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/api", tags=["Reports"])
 @router.get(
     "/test-types",
     response_model=list[str],
+    dependencies=[Requires(Permission.REPORTS_READ)],
     summary="List the test catalogue",
 )
 def get_test_types() -> list[str]:
@@ -38,6 +40,7 @@ def get_test_types() -> list[str]:
 @router.get(
     "/reports",
     response_model=list[ReportRead],
+    dependencies=[Requires(Permission.REPORTS_READ)],
     summary="List reports",
     description="Search and filter diagnostic reports. Pass `all` to a filter "
     "to disable it.",
@@ -68,6 +71,7 @@ def list_reports(
     "/reports/{report_id}",
     response_model=ReportRead,
     responses=NOT_FOUND_RESPONSE,
+    dependencies=[Requires(Permission.REPORTS_READ)],
     summary="Fetch one report",
 )
 def get_report(report_id: int, db: DbSession) -> Report:
@@ -78,6 +82,7 @@ def get_report(report_id: int, db: DbSession) -> Report:
     "/reports",
     response_model=ReportRead,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Requires(Permission.REPORTS_CREATE)],
     summary="Create a report",
 )
 def create_report(payload: ReportCreate, db: DbSession) -> Report:
@@ -88,6 +93,7 @@ def create_report(payload: ReportCreate, db: DbSession) -> Report:
     "/reports/{report_id}",
     response_model=ReportRead,
     responses=NOT_FOUND_RESPONSE,
+    dependencies=[Requires(Permission.REPORTS_UPDATE)],
     summary="Update a report",
     description="Partial update -- only the fields present in the body change.",
 )
@@ -99,6 +105,7 @@ def update_report(report_id: int, payload: ReportUpdate, db: DbSession) -> Repor
     "/reports/{report_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses=NOT_FOUND_RESPONSE,
+    dependencies=[Requires(Permission.REPORTS_DELETE)],
     summary="Delete a report",
 )
 def delete_report(report_id: int, db: DbSession) -> None:
@@ -110,6 +117,7 @@ def delete_report(report_id: int, db: DbSession) -> None:
     response_model=ReportExplanation,
     tags=["AI"],
     responses={**ERROR_RESPONSES, **NOT_FOUND_RESPONSE},
+    dependencies=[Requires(Permission.AI_EXPLAIN_REPORT)],
     summary="Explain what a report's test measures",
     description=(
         "Explains the requested test in general terms, grounded in the "

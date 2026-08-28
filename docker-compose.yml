@@ -59,6 +59,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://healthlab:healthlab@mysql:3306/jio_healthlab}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost,http://localhost:5173,http://127.0.0.1:5173}
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-14}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMe!Admin123}
     depends_on:
       mysql:
         condition: service_healthy
@@ -90,6 +94,10 @@ services:
     volumes:
       # Model weights are downloaded once and reused across rebuilds.
       - huggingface-cache:/models/huggingface
+      # Trained ML artifacts. Without this a `docker compose up --build`
+      # silently discards the trained delay model and every prediction
+      # endpoint starts returning ML_MODEL_NOT_TRAINED.
+      - model-artifacts:/app/app/ml/artifacts
     # Exposed on the host for /docs during development only. In production the
     # AI service stays on the internal network -- see docker-compose.prod.yml.
     ports:
@@ -110,3 +118,4 @@ volumes:
   mysql-data:
   qdrant-data:
   huggingface-cache:
+  model-artifacts:

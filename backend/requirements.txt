@@ -6,6 +6,12 @@ pymysql>=1.1.1
 psycopg2-binary>=2.9.9
 cryptography>=42.0.0
 pydantic-settings>=2.3.0
+
+# ── Auth ────────────────────────────────────────────────────────
+# argon2id is the current OWASP first choice for password storage.
+argon2-cffi>=23.1.0
+# PyJWT rather than python-jose: actively maintained, smaller surface.
+PyJWT>=2.9.0
 email-validator>=2.1.1
 python-dotenv>=1.0.1
 pytest>=8.2.0

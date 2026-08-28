@@ -14,7 +14,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import create_app
-from app.models import Report  # noqa: F401 - registers the table on Base
+from app.models import RefreshToken, Report, User  # noqa: F401 - register tables
+from app.security import Role
+from app.services import auth_service
 
 
 @pytest.fixture(name="engine")
@@ -40,8 +42,13 @@ def db_fixture(engine) -> Generator[Session, None, None]:
         session.close()
 
 
-@pytest.fixture(name="client")
-def client_fixture(engine) -> Generator[TestClient, None, None]:
+#: Password used for every fixture account.
+TEST_PASSWORD = "TestPassword!2026"
+
+
+@pytest.fixture(name="raw_client")
+def raw_client_fixture(engine) -> Generator[TestClient, None, None]:
+    """Unauthenticated client. Use this to test auth itself."""
     session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
     def override_get_db() -> Generator[Session, None, None]:
@@ -56,6 +63,69 @@ def client_fixture(engine) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _make_user(db: Session, role: Role) -> User:
+    return auth_service.create_user(
+        db,
+        email=f"{role.value.lower()}@test.example.com",
+        full_name=f"{role.value.title()} User",
+        password=TEST_PASSWORD,
+        role=role,
+    )
+
+
+@pytest.fixture(name="user_factory")
+def user_factory_fixture(engine):
+    """Create a user of a given role and return an authenticated client."""
+    session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+    def _factory(client: TestClient, role: Role) -> TestClient:
+        session = session_factory()
+        try:
+            existing = auth_service.get_user_by_email(
+                session, f"{role.value.lower()}@test.example.com"
+            )
+            if existing is None:
+                _make_user(session, role)
+        finally:
+            session.close()
+
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "email": f"{role.value.lower()}@test.example.com",
+                "password": TEST_PASSWORD,
+            },
+        )
+        assert response.status_code == 200, response.text
+        token = response.json()["access_token"]
+        client.headers["Authorization"] = f"Bearer {token}"
+        return client
+
+    return _factory
+
+
+@pytest.fixture(name="client")
+def client_fixture(raw_client, user_factory) -> TestClient:
+    """Client authenticated as ADMIN.
+
+    Most tests are about behaviour other than authorisation, so the default
+    client has every permission. RBAC itself is covered explicitly in
+    ``test_rbac.py``.
+    """
+    return user_factory(raw_client, Role.ADMIN)
+
+
+@pytest.fixture(name="as_role")
+def as_role_fixture(raw_client, user_factory):
+    """Authenticate the shared client as a specific role."""
+
+    def _login(role: Role) -> TestClient:
+        raw_client.headers.pop("Authorization", None)
+        return user_factory(raw_client, role)
+
+    return _login
 
 
 @pytest.fixture(name="report_payload")

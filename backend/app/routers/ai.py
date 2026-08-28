@@ -14,7 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from ..core.errors import ERROR_RESPONSES
-from ..dependencies import DbSession
+from ..dependencies import CurrentUser, DbSession, Requires
 from ..schemas.ai import (
     AIHealthResponse,
     ChatRequest,
@@ -28,6 +28,7 @@ from ..schemas.ai import (
     SearchResponse,
 )
 from ..schemas.report import ReportRead
+from ..security import Permission
 from ..services import report_search_service, risk_service
 from ..services.ai_client import AIServiceClient, get_ai_client
 
@@ -41,18 +42,20 @@ AIClientDep = Annotated[AIServiceClient, Depends(get_ai_client)]
     response_model=AIHealthResponse,
     summary="AI service availability",
     description=(
-        "Always returns 200. `reachable=false` reports that the AI dependency "
+        "Requires authentication but no specific permission. Always returns "
+        "200: `reachable=false` reports that the AI dependency "
         "is down; reports and the dashboard are unaffected, so this is not "
         "modelled as an error."
     ),
 )
-async def ai_health(client: AIClientDep) -> AIHealthResponse:
+async def ai_health(client: AIClientDep, user: CurrentUser) -> AIHealthResponse:
     return AIHealthResponse(**await client.health())
 
 
 @router.post(
     "/chat",
     response_model=ChatResponse,
+    dependencies=[Requires(Permission.AI_CHAT)],
     summary="Ask the laboratory knowledge assistant",
     description=(
         "Answers from the laboratory knowledge base and returns the sources "
@@ -75,6 +78,7 @@ async def chat(payload: ChatRequest, client: AIClientDep) -> ChatResponse:
 @router.post(
     "/search",
     response_model=SearchResponse,
+    dependencies=[Requires(Permission.AI_SEARCH)],
     summary="Semantic search over the knowledge base",
     description=(
         "Retrieval only -- no generation. Works even when the language model "
@@ -91,6 +95,7 @@ async def search(payload: SearchRequest, client: AIClientDep) -> SearchResponse:
 @router.get(
     "/risk-analytics",
     response_model=RiskAnalyticsResponse,
+    dependencies=[Requires(Permission.AI_RISK_ANALYTICS)],
     summary="Predicted delay risk across in-flight reports",
     description=(
         "Scores every report that can still miss its turnaround target and "
@@ -137,6 +142,7 @@ async def risk_analytics(
 @router.post(
     "/report-search",
     response_model=ReportSearchResponse,
+    dependencies=[Requires(Permission.AI_REPORT_SEARCH)],
     summary="Search reports in natural language",
     description=(
         "Matches a phrase such as *urgent kidney tests waiting in Mumbai* "
@@ -181,6 +187,7 @@ async def report_search(
 @router.post(
     "/report-index",
     response_model=ReportIndexResponse,
+    dependencies=[Requires(Permission.ADMIN_INDEX)],
     summary="Rebuild the semantic report index",
     description=(
         "Sanitises reports and pushes their summaries to the AI service. "

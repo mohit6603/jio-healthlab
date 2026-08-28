@@ -4,15 +4,65 @@ import type {
   ApiErrorShape,
   ChatResponse,
   DashboardSummary,
+  MeResponse,
   Report,
   ReportFormState,
-  RiskAnalytics
+  RiskAnalytics,
+  TokenResponse
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 function endpoint(path: string) {
   return `${API_BASE_URL}${path}`;
+}
+
+/* ── Token handling ───────────────────────────────────────────────
+ *
+ * The access token is held in memory only. The refresh token lives in
+ * localStorage so a page reload can restore the session silently.
+ *
+ * This is a deliberate compromise. Neither store survives an XSS attack, but
+ * keeping the short-lived access token out of persistent storage limits what
+ * a successful injection can exfiltrate, and the refresh token is revocable
+ * server-side and rotated on every use. httpOnly, SameSite cookies would be
+ * the stronger choice and are noted in docs/security.md.
+ */
+
+const REFRESH_STORAGE_KEY = "healthlab.refresh_token";
+
+let accessToken: string | null = null;
+let onSessionLost: (() => void) | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function getAccessToken() {
+  return accessToken;
+}
+
+export function setRefreshToken(token: string | null) {
+  try {
+    if (token) window.localStorage.setItem(REFRESH_STORAGE_KEY, token);
+    else window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+  } catch {
+    // Private browsing or blocked storage: the session simply will not
+    // survive a reload.
+  }
+}
+
+export function getRefreshToken(): string | null {
+  try {
+    return window.localStorage.getItem(REFRESH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Called when the session cannot be recovered, so the app can sign out. */
+export function setSessionLostHandler(handler: (() => void) | null) {
+  onSessionLost = handler;
 }
 
 /**
@@ -54,22 +104,71 @@ async function parseError(response: Response): Promise<ApiError> {
   });
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  let response: Response;
+async function send(path: string, options?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((options?.headers as Record<string, string>) ?? {})
+  };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
   try {
-    response = await fetch(endpoint(path), {
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers
-      },
-      ...options
-    });
-  } catch (cause) {
+    return await fetch(endpoint(path), { ...options, headers });
+  } catch {
     // Network-level failure: the server was never reached.
     throw new ApiError(0, {
       code: "NETWORK_ERROR",
       message: "Could not reach the server. Check your connection and retry."
     });
+  }
+}
+
+/** Single in-flight refresh, so a burst of 401s does not rotate N times. */
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshSession(): Promise<boolean> {
+  const token = getRefreshToken();
+  if (!token) return false;
+
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const response = await fetch(endpoint("/api/auth/refresh"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: token })
+        });
+        if (!response.ok) return false;
+        const session = (await response.json()) as {
+          access_token: string;
+          refresh_token: string;
+        };
+        setAccessToken(session.access_token);
+        setRefreshToken(session.refresh_token);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+
+  return refreshInFlight;
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response = await send(path, options);
+
+  // One transparent retry: the access token is short-lived by design, so an
+  // expired token during normal use is expected rather than exceptional.
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    if (await refreshSession()) {
+      response = await send(path, options);
+    } else {
+      setAccessToken(null);
+      setRefreshToken(null);
+      onSessionLost?.();
+    }
   }
 
   if (!response.ok) {
@@ -197,4 +296,31 @@ export function getAIHealth() {
 /** Predicted delay risk across in-flight reports. */
 export function getRiskAnalytics(limit = 100) {
   return request<RiskAnalytics>(`/api/ai/risk-analytics?limit=${limit}`);
+}
+
+/* ── Authentication ───────────────────────────────────────────── */
+
+export function login(email: string, password: string) {
+  return request<TokenResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password })
+  });
+}
+
+export function refreshWithToken(refreshToken: string) {
+  return request<TokenResponse>("/api/auth/refresh", {
+    method: "POST",
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+}
+
+export function getMe() {
+  return request<MeResponse>("/api/auth/me");
+}
+
+export function logout(refreshToken: string | null) {
+  return request<{ sessions_ended: number }>("/api/auth/logout", {
+    method: "POST",
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { Bot, FlaskConical, LayoutDashboard, TrendingUp } from "lucide-react";
+import { Bot, FlaskConical, LayoutDashboard, LogOut, TrendingUp } from "lucide-react";
+import { useAuth } from "./auth/AuthContext";
 import { getAIHealth } from "./api";
 import type { AIHealthResponse } from "./types";
 
@@ -13,6 +14,7 @@ import type { AIHealthResponse } from "./types";
  * plainly rather than discovering it by clicking into a broken page.
  */
 function App() {
+  const { user, can, signOut } = useAuth();
   const [aiHealth, setAiHealth] = useState<AIHealthResponse | null>(null);
 
   useEffect(() => {
@@ -50,11 +52,26 @@ function App() {
             <Bot size={17} />
             <span>AI Assistant</span>
           </NavLink>
-          <NavLink to="/analytics" className={navClass}>
-            <TrendingUp size={17} />
-            <span>AI Analytics</span>
-          </NavLink>
+          {can("ai:risk_analytics") && (
+            <NavLink to="/analytics" className={navClass}>
+              <TrendingUp size={17} />
+              <span>AI Analytics</span>
+            </NavLink>
+          )}
         </nav>
+        <div className="app-nav-user">
+          <span className="app-nav-name">{user?.full_name}</span>
+          <span className="tag">{user?.role}</span>
+          <button
+            type="button"
+            className="icon-action"
+            onClick={() => void signOut()}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut size={17} />
+          </button>
+        </div>
       </header>
 
       {aiDown && (
