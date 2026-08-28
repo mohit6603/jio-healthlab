@@ -41,3 +41,16 @@ frontend/dist/
 .idea/
 .vscode/
 tempCodeRunnerFile.py
+
+# AI service: model artifacts and caches (never commit weights)
+.venv-ai/
+ai-service/app/ml/artifacts/
+ai-service/knowledge/**/*.pdf
+!ai-service/knowledge/**/sample_*.pdf
+models/
+*.joblib
+*.pkl
+*.safetensors
+*.bin
+.cache/
+huggingface/

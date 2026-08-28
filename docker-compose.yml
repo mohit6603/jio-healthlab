@@ -3,32 +3,67 @@ services:
     image: mysql:8.4
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: jio_healthlab
-      MYSQL_USER: healthlab
-      MYSQL_PASSWORD: healthlab
-      MYSQL_ROOT_PASSWORD: healthlab-root
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-jio_healthlab}
+      MYSQL_USER: ${MYSQL_USER:-healthlab}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-healthlab}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-healthlab-root}
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uhealthlab -phealthlab || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -u$$MYSQL_USER -p$$MYSQL_PASSWORD || exit 1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
 
   api:
     build:
       context: ./backend
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
+      APP_NAME: ${APP_NAME:-JIO HealthLab}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://healthlab:healthlab@mysql:3306/jio_healthlab}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost,http://localhost:5173,http://127.0.0.1:5173}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
     depends_on:
       mysql:
         condition: service_healthy
     ports:
       - "8000:8000"
+
+  ai-service:
+    build:
+      context: ./ai-service
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AI_SERVICE_PORT: 8001
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-1.5B}
+      HF_HOME: /models/huggingface
+    volumes:
+      # Model weights are downloaded once and reused across rebuilds.
+      - huggingface-cache:/models/huggingface
+    # Exposed on the host for /docs during development only. In production the
+    # AI service stays on the internal network -- see docker-compose.prod.yml.
+    ports:
+      - "8001:8001"
 
   web:
     build:
@@ -43,3 +78,4 @@ services:
 
 volumes:
   mysql-data:
+  huggingface-cache:
