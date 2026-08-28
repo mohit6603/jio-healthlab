@@ -442,8 +442,10 @@ CI never downloads model weights — the AI service installs
 ## Monitoring
 
 Structured JSON logs from both services, with `X-Request-ID` propagated so one
-user action is traceable across both streams. `GET /metrics` exposes Prometheus
-text — report counts by status and priority, AI usage and failures by type,
+user action is traceable across both streams.
+
+`GET /metrics` on the **API** (`:8000`, not through the public web tier)
+exposes Prometheus text — report counts by status and priority, AI usage and failures by type,
 mean AI latency, ungrounded-answer counts, audit events by action and outcome.
 
 Health endpoints separate liveness from readiness: `/health` never touches a

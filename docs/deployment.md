@@ -152,6 +152,9 @@ Point the agent at the Docker JSON log files and set
 `$.level = "ERROR"`, `$.message = "ai_error"`, `$.latency_ms > 30000`.
 
 `GET /metrics` exposes Prometheus text for a scraper or an OTEL collector.
+Scrape the API directly on the internal network (`http://127.0.0.1:8000/metrics`
+on the host) with an admin token — the public nginx returns 404 for `/metrics`
+on purpose, so usage patterns and error rates are not published.
 
 ---
 
