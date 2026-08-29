@@ -136,37 +136,70 @@ in its cited source, so they are answerable rather than aspirational.
 | Hit@3 | 0.9714 |
 | Hit@5 | 1.0000 |
 | MRR | 0.9167 |
-| Correct rejections | 1.0000 (5/5 unanswerable) |
-| Latency | mean 5.99 ms (embed 4.87, search 1.12) |
+| Correct rejections | 1.0000 (5/5 unanswerable retrieved nothing) |
+| Latency | mean 17.4 ms (embed 13.9, search 3.5) |
 
-**End to end**, Qwen2.5-0.5B-Instruct on CPU
+**End to end**, Qwen2.5-0.5B-Instruct on CPU, greedy decoding
 
 | Metric | Value |
 |---|---|
-| Source presence | 0.9714 |
-| Keyword coverage | 0.7714 (23/35 complete, 4 with none) |
+| Source presence | 1.0000 |
+| Grounded rate | 1.0000 |
+| Keyword coverage | 0.7857 (22/35 complete, 2 with none) |
 | Refusal accuracy | 1.0000 |
 | Boundary accuracy | 1.0000 |
 | System prompt leaks | 0 |
-| Generation latency | mean 12.2 s, median 10.8 s |
+| Generation latency | mean 21.7 s, median 21.9 s, max 49.0 s |
+
+These numbers are reproducible. `LLM_TEMPERATURE=0.0` selects greedy decoding,
+so the same question returns the same answer byte for byte. An earlier version
+of this table was measured under sampling and is not comparable to it — one
+lucky sample is not a result.
 
 ### Reading these honestly
 
-Keyword coverage of 0.77 mixes two different things, and the harness says so.
+Keyword coverage of 0.79 is the weakest number here, and it mixes three
+different things.
 
-*Wording, not error*: asked "do I need to fast before a CBC", the model
-answered **"No, you do not need to fast"** — correct, but the expected phrase
-was "not required".
+**Paraphrase, not error** — 11 of 35. Asked what a thyroid panel measures, the
+model answers "thyroid hormones" where the expected keyword was "TSH". The
+answer is correct; the metric is a substring test and cannot tell the
+difference.
 
-*Genuinely wrong*: asked to contrast LDL and HDL, the model answered about
-**triglycerides**. Asked what anaemia means, it described a reduced red cell
-count where the source says a haemoglobin level below the expected range.
+**Dropped qualification** — 1. *"Can I add a test to a sample I have already
+given?"* → **"Yes, you can."** The source says it depends on the tube type
+collected and the volume remaining. Directionally right, materially incomplete.
 
-**Retrieval ranked the correct chunk first in both failures.** These are
-generation faithfulness limits of a 0.5B model, not retrieval problems. The
-1.5B instruct variant is configured via `LLM_MODEL` and is the right choice
-where latency matters less than fidelity — measured at 1.1 tok/s versus
-4.4 tok/s on CPU.
+**Genuinely wrong** — 1. *"Do I need to fast before a complete blood count?"*
+→ **"Yes, you need to fast."** The source says fasting is **not** required for
+a CBC. This is a confident contradiction of the model's own retrieved context,
+and it is the worst behaviour in this evaluation.
+
+**Retrieval ranked the correct chunk first in both failures.** Source presence
+and grounded rate are both 1.0000: every answer cites a real chunk that was
+really retrieved. The gap is generation faithfulness, not retrieval.
+
+#### A prompt fix that made things worse
+
+The obvious response to the fasting error is a yes/no rule in the system
+prompt. That was tried, measured across all 43 questions, and reverted:
+
+| Prompt | Keyword coverage | Zero-keyword answers | CBC fasting |
+|---|---|---|---|
+| **Shipped** | **0.7857** | **2** | wrong |
+| + yes/no rules | 0.7429 | 6 | still wrong |
+| + completeness rules | not run | — | fixed, but broke lipid fasting |
+
+The rule taught a 0.5B model to treat every question as a yes/no question:
+*"Why was I asked to give another sample?"* started answering **"Yes."** It did
+not even fix the case it was written for. A single spot-check had suggested it
+worked — at a non-default `top_k`, on one question — and the full run
+disagreed. The full run is the evidence.
+
+The conclusion is a capability ceiling, not a prompt bug. Prompt-engineering
+around it traded one error for another. `LLM_MODEL` selects the 1.5B instruct
+variant where fidelity matters more than the 4x latency cost — measured at
+1.1 tok/s versus 4.4 tok/s on CPU.
 
 ---
 

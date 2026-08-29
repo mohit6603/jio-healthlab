@@ -171,7 +171,7 @@ jio-healthlab/
 │   │   └── bootstrap.py
 │   ├── knowledge/           14 original documents: lab_tests · sop · faq
 │   ├── evaluation/          43-question set + two evaluators
-│   └── tests/               491 tests
+│   └── tests/               519 tests (486 unit + 33 integration)
 │
 ├── frontend/                React SPA
 │   └── src/{pages,auth,api.ts,types.ts}      75 tests
@@ -375,14 +375,19 @@ written by reading the documents; a test asserts every expected keyword
 actually appears in its cited source.
 
 **Retrieval** — Hit@1 **0.857**, Hit@5 **1.000**, MRR **0.917**, correct
-rejections **1.000**, latency **5.99 ms** mean.
+rejections **1.000**, latency **17.4 ms** mean.
 
-**End to end** — source presence 0.971, keyword coverage 0.771, refusal
-accuracy **1.000**, boundary accuracy **1.000**, system prompt leaks **0**.
+**End to end**, greedy decoding and therefore reproducible — source presence
+**1.000**, grounded rate **1.000**, keyword coverage 0.786, refusal accuracy
+**1.000**, boundary accuracy **1.000**, system prompt leaks **0**.
 
-Keyword coverage of 0.77 is honest, not polished: some misses are wording, and
-some are the 0.5B model genuinely getting it wrong while retrieval ranked the
-right chunk first. Both are documented in [docs/rag.md](docs/rag.md).
+Keyword coverage of 0.79 is the honest number. Of 13 imperfect answers, 11 are
+paraphrase the substring metric cannot credit, 1 drops a qualification, and
+**1 is genuinely wrong** — asked whether a CBC needs fasting, the model says
+yes where its own retrieved source says no. Retrieval ranked the correct chunk
+first in both real failures, so this is a generation ceiling in a 0.5B model.
+A prompt fix was tried, measured, and reverted for making the overall score
+worse. All of it is written up in [docs/rag.md](docs/rag.md).
 
 ---
 
@@ -390,7 +395,7 @@ right chunk first. Both are documented in [docs/rag.md](docs/rag.md).
 
 ```bash
 cd backend    && pytest                    # 325
-cd ai-service && pytest                    # 491 (+ 22 integration)
+cd ai-service && pytest                    # 486 (+ 33 integration)
 cd frontend   && npm test                  # 75
 ```
 
