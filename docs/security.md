@@ -24,7 +24,28 @@ token, so ending all of them is the only safe response.
 
 **No account enumeration** — an unknown email and a wrong password return
 byte-identical responses, and an unknown email still pays for a hash so timing
-does not leak either.
+does not leak either. Lockout does not leak it either: an unknown email never
+produces the lockout message, only `INVALID_CREDENTIALS`.
+
+**Account lockout** — 8 consecutive failures locks an account for 15 minutes.
+Checked *before* the password, so a locked account cannot be probed by
+continuing to guess, and a correct password is refused while locked. The
+counter resets on any successful sign-in, so the threshold is consecutive
+failures rather than lifetime ones. Time-based rather than permanent: a
+legitimate user recovers without an administrator, and an attacker gains only
+a delay. `auth_service.unlock_user` clears it manually.
+
+**Session storage** — the refresh token is an **httpOnly, SameSite=Strict
+cookie** scoped to `/api/auth`. JavaScript cannot read it, so an XSS running in
+the page cannot exfiltrate a session. Verified in a real browser while signed
+in: `localStorage`, `sessionStorage` and `document.cookie` are all empty, and a
+full page reload still restores the session. `Secure` is set automatically in
+production and off locally, where plain http would make the browser discard the
+cookie. The access token stays in memory for the tab's lifetime.
+
+A request body is still accepted for non-browser clients that cannot hold
+cookies; when both are present the cookie wins, so a client cannot downgrade
+to an older token.
 
 **Production guard** — the application refuses to start with
 `ENVIRONMENT=production` while `JWT_SECRET_KEY` or `SEED_ADMIN_PASSWORD` is the
@@ -196,9 +217,8 @@ Named rather than glossed over.
 
 | Gap | Impact | Would fix |
 |---|---|---|
-| Tokens in `localStorage` | XSS could exfiltrate a session | httpOnly `SameSite=Strict` cookies with CSRF tokens |
 | No MFA | Password alone is the factor | TOTP for `ADMIN` |
-| No password rotation or lockout | Brute force is limited only by nginx | Account lockout with backoff |
+| No password rotation policy | A weak password stays valid indefinitely | Expiry and history checks |
 | Secrets via environment | Visible to anything reading the process | AWS Secrets Manager with rotation |
 | Audit trail append-only by convention | A DB admin could edit history | Append-only storage or off-host shipping |
 | No per-user AI quota | One user could monopolise generation | Per-user token budget |

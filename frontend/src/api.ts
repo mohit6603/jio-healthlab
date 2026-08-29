@@ -20,17 +20,16 @@ function endpoint(path: string) {
 
 /* ── Token handling ───────────────────────────────────────────────
  *
- * The access token is held in memory only. The refresh token lives in
- * localStorage so a page reload can restore the session silently.
+ * The access token lives in memory only, for the lifetime of the tab.
  *
- * This is a deliberate compromise. Neither store survives an XSS attack, but
- * keeping the short-lived access token out of persistent storage limits what
- * a successful injection can exfiltrate, and the refresh token is revocable
- * server-side and rotated on every use. httpOnly, SameSite cookies would be
- * the stronger choice and are noted in docs/security.md.
+ * The refresh token is never touched by this code at all: the server sets it
+ * as an httpOnly, SameSite=Strict cookie scoped to /api/auth. JavaScript
+ * cannot read it, so an XSS that runs in this page cannot steal a session --
+ * which is exactly what localStorage could not promise.
+ *
+ * The cost is that "do I have a session?" is no longer answerable locally.
+ * The app asks the server instead, by attempting a refresh on start.
  */
-
-const REFRESH_STORAGE_KEY = "healthlab.refresh_token";
 
 let accessToken: string | null = null;
 let onSessionLost: (() => void) | null = null;
@@ -41,24 +40,6 @@ export function setAccessToken(token: string | null) {
 
 export function getAccessToken() {
   return accessToken;
-}
-
-export function setRefreshToken(token: string | null) {
-  try {
-    if (token) window.localStorage.setItem(REFRESH_STORAGE_KEY, token);
-    else window.localStorage.removeItem(REFRESH_STORAGE_KEY);
-  } catch {
-    // Private browsing or blocked storage: the session simply will not
-    // survive a reload.
-  }
-}
-
-export function getRefreshToken(): string | null {
-  try {
-    return window.localStorage.getItem(REFRESH_STORAGE_KEY);
-  } catch {
-    return null;
-  }
 }
 
 /** Called when the session cannot be recovered, so the app can sign out. */
@@ -113,7 +94,12 @@ async function send(path: string, options?: RequestInit): Promise<Response> {
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
   try {
-    return await fetch(endpoint(path), { ...options, headers });
+    // same-origin so the httpOnly refresh cookie rides along on auth calls.
+    return await fetch(endpoint(path), {
+      ...options,
+      headers,
+      credentials: "same-origin"
+    });
   } catch {
     // Network-level failure: the server was never reached.
     throw new ApiError(0, {
@@ -127,24 +113,19 @@ async function send(path: string, options?: RequestInit): Promise<Response> {
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function refreshSession(): Promise<boolean> {
-  const token = getRefreshToken();
-  if (!token) return false;
-
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
+        // No body: the browser attaches the httpOnly cookie. `credentials`
+        // must be explicit or fetch omits it on some configurations.
         const response = await fetch(endpoint("/api/auth/refresh"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: token })
+          credentials: "same-origin"
         });
         if (!response.ok) return false;
-        const session = (await response.json()) as {
-          access_token: string;
-          refresh_token: string;
-        };
+        const session = (await response.json()) as { access_token: string };
         setAccessToken(session.access_token);
-        setRefreshToken(session.refresh_token);
         return true;
       } catch {
         return false;
@@ -167,7 +148,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       response = await send(path, options);
     } else {
       setAccessToken(null);
-      setRefreshToken(null);
       onSessionLost?.();
     }
   }
@@ -308,21 +288,20 @@ export function login(email: string, password: string) {
   });
 }
 
-export function refreshWithToken(refreshToken: string) {
-  return request<TokenResponse>("/api/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refresh_token: refreshToken })
-  });
+/** Exchange the httpOnly cookie for a new session. No token is passed: the
+ *  browser holds it where this code cannot reach. */
+export function refreshSessionFromCookie() {
+  return request<TokenResponse>("/api/auth/refresh", { method: "POST" });
 }
 
 export function getMe() {
   return request<MeResponse>("/api/auth/me");
 }
 
-export function logout(refreshToken: string | null) {
+export function logout() {
   return request<{ sessions_ended: number }>("/api/auth/logout", {
     method: "POST",
-    body: JSON.stringify({ refresh_token: refreshToken })
+    body: JSON.stringify({})
   });
 }
 

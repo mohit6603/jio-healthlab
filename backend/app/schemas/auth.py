@@ -13,7 +13,13 @@ class LoginRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1, max_length=512)
+    """Optional: browsers send the refresh token as an httpOnly cookie.
+
+    The body is still accepted for non-browser clients that cannot hold
+    cookies. When both are present the cookie wins.
+    """
+
+    refresh_token: str | None = Field(default=None, max_length=512)
 
 
 class LogoutRequest(BaseModel):

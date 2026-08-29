@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, Response, status
 
+from ..config import Settings, get_settings
 from ..core.errors import ERROR_RESPONSES, AppError
 from ..dependencies import CurrentUser, DbSession, Requires
 from ..schemas.auth import (
@@ -23,6 +24,53 @@ from ..services.audit_service import Action, Status
 router = APIRouter(prefix="/api/auth", tags=["Authentication"], responses=ERROR_RESPONSES)
 
 
+def _set_refresh_cookie(response: Response, token: str, settings: Settings) -> None:
+    """Store the refresh token in an httpOnly cookie.
+
+    httpOnly means JavaScript cannot read it, so an XSS that runs in the page
+    cannot exfiltrate a session. SameSite=Strict means a cross-site request
+    cannot carry it, which is what a CSRF attack would need. The path scopes
+    it to the auth endpoints, so it is not attached to every API call.
+    """
+    if not settings.refresh_cookie_enabled:
+        return
+
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.refresh_cookie_samesite,  # type: ignore[arg-type]
+        path=settings.refresh_cookie_path,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+    )
+
+
+def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
+        path=settings.refresh_cookie_path,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.refresh_cookie_samesite,  # type: ignore[arg-type]
+    )
+
+
+def _read_refresh_token(
+    request: Request, supplied: str | None, settings: Settings
+) -> str | None:
+    """Prefer the cookie; fall back to the body.
+
+    The body is still accepted so a non-browser client -- a CLI, a test, a
+    mobile app that cannot hold cookies -- keeps working.
+    """
+    if settings.refresh_cookie_enabled:
+        cookie = request.cookies.get(settings.refresh_cookie_name)
+        if cookie:
+            return cookie
+    return supplied
+
+
 @router.post(
     "/login",
     response_model=TokenResponse,
@@ -34,9 +82,10 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"], responses=ERROR_
         "this endpoint cannot be used to discover which accounts exist."
     ),
 )
-def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
+def login(payload: LoginRequest, db: DbSession, response: Response) -> TokenResponse:
+    settings = get_settings()
     try:
-        user = auth_service.authenticate(db, payload.email, payload.password)
+        user = auth_service.authenticate(db, payload.email, payload.password, settings)
     except AppError as exc:
         # The attempted email is not recorded: it is unverified user input and
         # would put an address in the audit trail for anyone who typed one.
@@ -49,6 +98,7 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
         raise
 
     session = auth_service.issue_session(db, user)
+    _set_refresh_cookie(response, str(session["refresh_token"]), settings)
     audit_service.record(
         db, action=Action.LOGIN_SUCCEEDED, user=user, resource_type="user",
         resource_id=user.id,
@@ -69,9 +119,23 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
         "the current one."
     ),
 )
-def refresh(payload: RefreshRequest, db: DbSession) -> TokenResponse:
+def refresh(
+    request: Request,
+    response: Response,
+    db: DbSession,
+    payload: RefreshRequest | None = None,
+) -> TokenResponse:
+    settings = get_settings()
+    token = _read_refresh_token(
+        request, payload.refresh_token if payload else None, settings
+    )
+    if not token:
+        raise auth_service.InvalidRefreshTokenError(
+            "No refresh token was supplied."
+        )
+
     try:
-        session = auth_service.rotate_session(db, payload.refresh_token)
+        session = auth_service.rotate_session(db, token)
     except AppError as exc:
         audit_service.record(
             db,
@@ -85,6 +149,7 @@ def refresh(payload: RefreshRequest, db: DbSession) -> TokenResponse:
         )
         raise
 
+    _set_refresh_cookie(response, str(session["refresh_token"]), settings)
     audit_service.record(
         db, action=Action.SESSION_REFRESHED, user=session["user"],
     )
@@ -119,12 +184,23 @@ def me(user: CurrentUser) -> MeResponse:
     ),
 )
 def logout(
-    payload: LogoutRequest, user: CurrentUser, db: DbSession
+    request: Request,
+    response: Response,
+    payload: LogoutRequest,
+    user: CurrentUser,
+    db: DbSession,
 ) -> LogoutResponse:
-    if payload.all_sessions or payload.refresh_token is None:
+    settings = get_settings()
+    token = _read_refresh_token(request, payload.refresh_token, settings)
+
+    if payload.all_sessions or token is None:
         ended = auth_service.revoke_all_for_user(db, user.id)
     else:
-        ended = 1 if auth_service.revoke_session(db, payload.refresh_token) else 0
+        ended = 1 if auth_service.revoke_session(db, token) else 0
+
+    # Always clear the cookie, even if the token was already revoked: leaving
+    # a dead cookie in the browser only causes a confusing failure later.
+    _clear_refresh_cookie(response, settings)
 
     audit_service.record(
         db, action=Action.LOGOUT, user=user, detail=f"sessions_ended={ended}"

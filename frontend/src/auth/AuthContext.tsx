@@ -10,12 +10,10 @@ import {
 import {
   ApiError,
   getMe,
-  getRefreshToken,
   login as loginRequest,
   logout as logoutRequest,
-  refreshWithToken,
+  refreshSessionFromCookie,
   setAccessToken,
-  setRefreshToken,
   setSessionLostHandler
 } from "../api";
 import type { AuthUser } from "../types";
@@ -50,7 +48,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback(() => {
     setAccessToken(null);
-    setRefreshToken(null);
     setUser(null);
     setPermissions(new Set());
   }, []);
@@ -64,23 +61,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function restore() {
-      const stored = getRefreshToken();
-      if (!stored) {
-        if (!cancelled) setInitialising(false);
-        return;
-      }
-
+      // The refresh token is an httpOnly cookie, so this code cannot check
+      // whether a session exists -- it asks the server. A 401 simply means
+      // "not signed in", which is the common case on a first visit.
       try {
-        const session = await refreshWithToken(stored);
+        const session = await refreshSessionFromCookie();
         if (cancelled) return;
         setAccessToken(session.access_token);
-        setRefreshToken(session.refresh_token);
         const me = await getMe();
         if (cancelled) return;
         setUser(me.user);
         setPermissions(new Set(me.permissions));
       } catch {
-        // Expired, revoked, or the server rotated it away. Sign out quietly.
+        // No cookie, expired, or revoked. Stay signed out quietly.
         if (!cancelled) clear();
       } finally {
         if (!cancelled) setInitialising(false);
@@ -95,8 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     const session = await loginRequest(email, password);
+    // The server also set the httpOnly refresh cookie on this response.
     setAccessToken(session.access_token);
-    setRefreshToken(session.refresh_token);
     setUser(session.user);
     try {
       const me = await getMe();
@@ -109,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
-      await logoutRequest(getRefreshToken());
+      await logoutRequest();
     } catch {
       // Signing out locally matters more than the server acknowledging it.
     } finally {

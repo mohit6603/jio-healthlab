@@ -22,6 +22,16 @@ def login(client, email=ADMIN_EMAIL, password=TEST_PASSWORD):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+def without_cookie(client):
+    """Drop the refresh cookie so a body-supplied token is the one used.
+
+    The cookie deliberately takes precedence, so a test exercising the
+    non-browser path has to clear it first.
+    """
+    client.cookies.clear()
+    return client
+
+
 # ------------------------------------------------------------- passwords ---
 def test_password_hash_is_not_the_password():
     assert hash_password("SuperSecret!2026") != "SuperSecret!2026"
@@ -225,9 +235,11 @@ def test_refresh_rotates_the_token(admin):
 
 def test_the_old_refresh_token_stops_working(admin):
     first = login(admin).json()["refresh_token"]
-    admin.post("/api/auth/refresh", json={"refresh_token": first})
+    without_cookie(admin).post("/api/auth/refresh", json={"refresh_token": first})
 
-    response = admin.post("/api/auth/refresh", json={"refresh_token": first})
+    response = without_cookie(admin).post(
+        "/api/auth/refresh", json={"refresh_token": first}
+    )
 
     assert response.status_code == 401
 
@@ -235,12 +247,16 @@ def test_the_old_refresh_token_stops_working(admin):
 def test_reusing_a_rotated_token_ends_every_session(admin):
     """Replay is indistinguishable from theft, so all sessions are revoked."""
     first = login(admin).json()["refresh_token"]
-    second = admin.post(
+    second = without_cookie(admin).post(
         "/api/auth/refresh", json={"refresh_token": first}
     ).json()["refresh_token"]
 
-    reuse = admin.post("/api/auth/refresh", json={"refresh_token": first})
-    after = admin.post("/api/auth/refresh", json={"refresh_token": second})
+    reuse = without_cookie(admin).post(
+        "/api/auth/refresh", json={"refresh_token": first}
+    )
+    after = without_cookie(admin).post(
+        "/api/auth/refresh", json={"refresh_token": second}
+    )
 
     assert reuse.status_code == 401
     assert "security" in reuse.json()["error"]["message"].lower()
@@ -249,7 +265,9 @@ def test_reusing_a_rotated_token_ends_every_session(admin):
 
 
 def test_unknown_refresh_token_is_rejected(admin):
-    response = admin.post("/api/auth/refresh", json={"refresh_token": "made-up"})
+    response = without_cookie(admin).post(
+        "/api/auth/refresh", json={"refresh_token": "made-up"}
+    )
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "INVALID_REFRESH_TOKEN"
@@ -293,7 +311,7 @@ def test_logout_revokes_the_session(admin):
         json={"refresh_token": session["refresh_token"]},
         headers=headers,
     )
-    reuse = admin.post(
+    reuse = without_cookie(admin).post(
         "/api/auth/refresh", json={"refresh_token": session["refresh_token"]}
     )
 
@@ -315,7 +333,7 @@ def test_logout_all_sessions(admin):
     # At least the two opened here; the fixture's own login counts too.
     assert response.json()["sessions_ended"] >= 2
     for session in (first, second):
-        assert admin.post(
+        assert without_cookie(admin).post(
             "/api/auth/refresh", json={"refresh_token": session["refresh_token"]}
         ).status_code == 401
 
@@ -323,7 +341,7 @@ def test_logout_all_sessions(admin):
 def test_logout_with_an_unknown_token_is_not_an_error(admin):
     token = login(admin).json()["access_token"]
 
-    response = admin.post(
+    response = without_cookie(admin).post(
         "/api/auth/logout",
         json={"refresh_token": "made-up"},
         headers={"Authorization": f"Bearer {token}"},

@@ -263,7 +263,9 @@ CI applies, checks and rolls back the whole chain on every push.
 ## Authentication
 
 15-minute access JWT plus a revocable refresh token, rotated on every use.
-Only a SHA-256 digest of the refresh token is stored.
+Only a SHA-256 digest of the refresh token is stored, and the token itself
+lives in an httpOnly, SameSite=Strict cookie that JavaScript cannot read.
+Eight consecutive failures lock an account for 15 minutes.
 
 ```
 POST /api/auth/login     credentials → access + refresh token
@@ -384,10 +386,15 @@ from `MODEL_UNAVAILABLE` from `VECTOR_STORE_UNAVAILABLE`.
 
 ## Security
 
-Argon2id passwords · refresh rotation with reuse detection · no account
-enumeration · permission-based RBAC · PII allow-list · log redaction ·
-append-only audit · strict CSP · nginx rate limiting · unprivileged
-containers · production secret guard.
+Argon2id passwords · **httpOnly SameSite=Strict cookie sessions** · refresh
+rotation with reuse detection · **account lockout** · no account enumeration ·
+permission-based RBAC · PII allow-list · log redaction · append-only audit ·
+strict CSP · nginx rate limiting · unprivileged containers · production secret
+guard.
+
+Sessions are held where JavaScript cannot reach them. Verified in a browser
+while signed in: `localStorage`, `sessionStorage` and `document.cookie` are all
+empty, and a reload still restores the session.
 
 [docs/security.md](docs/security.md) documents all of it — **including a
 "Known gaps" table** naming what is not protected.
@@ -484,9 +491,7 @@ or set `LLM_PROVIDER=none`.
 
 ## Future improvements
 
-- httpOnly cookie sessions with CSRF tokens, replacing `localStorage`
-- MFA for administrators; account lockout with backoff
-- Streaming token-by-token responses, so 12 s feels like 1 s
+- MFA for administrators
 - A reranker over the top-k, and hybrid keyword + vector retrieval
 - Train the delay model on real turnaround data once it exists
 - Per-user AI quotas

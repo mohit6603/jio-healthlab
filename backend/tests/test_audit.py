@@ -96,8 +96,12 @@ def test_refresh_token_reuse_is_recorded(client, db):
         "/api/auth/login",
         json={"email": "admin@test.example.com", "password": "TestPassword!2026"},
     ).json()
-    client.post("/api/auth/refresh", json={"refresh_token": session["refresh_token"]})
 
+    # The httpOnly cookie takes precedence over a body token, so it has to be
+    # cleared to replay the old one -- which is what reuse detection is for.
+    client.cookies.clear()
+    client.post("/api/auth/refresh", json={"refresh_token": session["refresh_token"]})
+    client.cookies.clear()
     client.post("/api/auth/refresh", json={"refresh_token": session["refresh_token"]})
 
     assert entries(db, str(Action.SESSION_REUSE_DETECTED))

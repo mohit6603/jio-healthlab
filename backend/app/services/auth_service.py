@@ -52,6 +52,16 @@ class InactiveAccountError(AuthenticationError):
     message = "This account has been deactivated."
 
 
+class AccountLockedError(AuthenticationError):
+    """Too many consecutive failures."""
+
+    code = "ACCOUNT_LOCKED"
+    message = (
+        "Too many failed sign-in attempts. Try again in a few minutes, or ask "
+        "an administrator to unlock the account."
+    )
+
+
 class InvalidRefreshTokenError(AuthenticationError):
     code = "INVALID_REFRESH_TOKEN"
     message = "Your session is no longer valid. Sign in again."
@@ -99,8 +109,11 @@ def create_user(
 
 
 # ---------------------------------------------------------- authentication --
-def authenticate(db: Session, email: str, password: str) -> User:
+def authenticate(
+    db: Session, email: str, password: str, settings: Settings | None = None
+) -> User:
     """Verify credentials and return the user, or raise."""
+    settings = settings or get_settings()
     user = get_user_by_email(db, email)
 
     if user is None:
@@ -110,7 +123,14 @@ def authenticate(db: Session, email: str, password: str) -> User:
         logger.info("login_failed", extra={"reason": "unknown_email"})
         raise InvalidCredentialsError()
 
+    # Checked before the password, so a locked account cannot be probed by
+    # continuing to guess.
+    if user.locked_until is not None and user.locked_until > _now():
+        logger.info("login_blocked", extra={"user_id": user.id, "reason": "locked"})
+        raise AccountLockedError()
+
     if not verify_password(password, user.password_hash):
+        _record_failure(db, user, settings)
         logger.info("login_failed", extra={"user_id": user.id, "reason": "bad_password"})
         raise InvalidCredentialsError()
 
@@ -124,9 +144,39 @@ def authenticate(db: Session, email: str, password: str) -> User:
         logger.info("password_rehashed", extra={"user_id": user.id})
 
     user.last_login_at = _now()
+    # A successful sign-in clears the counter: the threshold is for
+    # *consecutive* failures, not lifetime ones.
+    user.failed_login_count = 0
+    user.locked_until = None
     db.commit()
     logger.info("login_succeeded", extra={"user_id": user.id, "role": user.role})
     return user
+
+
+def _record_failure(db: Session, user: User, settings: Settings) -> None:
+    """Count a failed attempt and lock the account once the threshold is hit."""
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+
+    if user.failed_login_count >= settings.login_max_attempts:
+        user.locked_until = _now() + timedelta(minutes=settings.login_lockout_minutes)
+        logger.warning(
+            "account_locked",
+            extra={
+                "user_id": user.id,
+                "attempts": user.failed_login_count,
+                "minutes": settings.login_lockout_minutes,
+            },
+        )
+
+    db.commit()
+
+
+def unlock_user(db: Session, user: User) -> None:
+    """Clear a lockout. Used by administrators."""
+    user.failed_login_count = 0
+    user.locked_until = None
+    db.commit()
+    logger.info("account_unlocked", extra={"user_id": user.id})
 
 
 # ------------------------------------------------------------- sessions -----

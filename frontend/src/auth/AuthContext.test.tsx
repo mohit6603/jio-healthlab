@@ -14,9 +14,7 @@ vi.mock("../api", async () => {
     login: vi.fn(),
     logout: vi.fn(),
     getMe: vi.fn(),
-    refreshWithToken: vi.fn(),
-    getRefreshToken: vi.fn(() => null),
-    setRefreshToken: vi.fn(),
+    refreshSessionFromCookie: vi.fn(),
     setAccessToken: vi.fn(),
     setSessionLostHandler: vi.fn()
   };
@@ -26,8 +24,7 @@ const api = await import("../api");
 const mockLogin = vi.mocked(api.login);
 const mockLogout = vi.mocked(api.logout);
 const mockGetMe = vi.mocked(api.getMe);
-const mockRefresh = vi.mocked(api.refreshWithToken);
-const mockGetRefreshToken = vi.mocked(api.getRefreshToken);
+const mockRefresh = vi.mocked(api.refreshSessionFromCookie);
 
 const USER: AuthUser = {
   id: 1,
@@ -80,11 +77,14 @@ function renderProbe() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetRefreshToken.mockReturnValue(null);
+  // No cookie: the server rejects the refresh, which is "not signed in".
+  mockRefresh.mockRejectedValue(
+    new ApiError(401, { code: "INVALID_REFRESH_TOKEN", message: "no session" })
+  );
 });
 
 describe("AuthProvider", () => {
-  it("starts anonymous when no refresh token is stored", async () => {
+  it("starts anonymous when the server reports no session", async () => {
     renderProbe();
 
     expect(await screen.findByTestId("user")).toHaveTextContent("anonymous");
@@ -106,8 +106,7 @@ describe("AuthProvider", () => {
     expect(screen.getByTestId("admin")).toHaveTextContent("no");
   });
 
-  it("restores a session from the stored refresh token", async () => {
-    mockGetRefreshToken.mockReturnValue("stored-refresh");
+  it("restores a session from the httpOnly cookie", async () => {
     mockRefresh.mockResolvedValue(session());
     mockGetMe.mockResolvedValue(me(["reports:read"]));
 
@@ -116,11 +115,11 @@ describe("AuthProvider", () => {
     await waitFor(() =>
       expect(screen.getByTestId("user")).toHaveTextContent("Ravi Technician")
     );
-    expect(mockRefresh).toHaveBeenCalledWith("stored-refresh");
+    // No token is passed: the browser holds it where this code cannot read it.
+    expect(mockRefresh).toHaveBeenCalledWith();
   });
 
-  it("stays anonymous when the stored token is rejected", async () => {
-    mockGetRefreshToken.mockReturnValue("expired");
+  it("stays anonymous when the cookie is expired or revoked", async () => {
     mockRefresh.mockRejectedValue(
       new ApiError(401, { code: "INVALID_REFRESH_TOKEN", message: "no" })
     );
@@ -198,7 +197,6 @@ describe("RequireAuth", () => {
   });
 
   it("shows a restoring state rather than flashing the login page", async () => {
-    mockGetRefreshToken.mockReturnValue("stored");
     mockRefresh.mockReturnValue(new Promise(() => {}));
 
     renderGuarded();
@@ -208,7 +206,6 @@ describe("RequireAuth", () => {
   });
 
   it("renders the page once a session is restored", async () => {
-    mockGetRefreshToken.mockReturnValue("stored");
     mockRefresh.mockResolvedValue(session());
     mockGetMe.mockResolvedValue(me(["reports:read"]));
 
@@ -220,7 +217,6 @@ describe("RequireAuth", () => {
 
 describe("RequirePermission", () => {
   function renderPermissioned(permissions: string[]) {
-    mockGetRefreshToken.mockReturnValue("stored");
     mockRefresh.mockResolvedValue(session());
     mockGetMe.mockResolvedValue(me(permissions));
 

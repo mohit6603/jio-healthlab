@@ -40,6 +40,24 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     #: Long, because refresh tokens are revocable and rotated on every use.
     refresh_token_expire_days: int = 14
+    #: Refresh tokens are delivered as an httpOnly cookie, so JavaScript --
+    #: including anything an XSS injects -- cannot read them. Disable only for
+    #: a non-browser client that cannot hold cookies.
+    refresh_cookie_enabled: bool = True
+    refresh_cookie_name: str = "healthlab_refresh"
+    #: Set automatically in production; off locally because http://localhost
+    #: is not a secure context for cookie purposes.
+    refresh_cookie_secure: bool | None = None
+    #: Strict blocks the cookie on any cross-site navigation, which is what a
+    #: CSRF attack needs. There is no legitimate cross-site flow here.
+    refresh_cookie_samesite: str = "strict"
+    #: Scoped so the cookie is only ever sent to the auth endpoints.
+    refresh_cookie_path: str = "/api/auth"
+
+    #: Consecutive failures before an account is temporarily locked.
+    login_max_attempts: int = 8
+    login_lockout_minutes: int = 15
+
     #: Seeded on first start so a fresh install is usable. Demo only.
     seed_admin_email: str = "admin@jiohealthlab.example.com"
     seed_admin_password: str = "ChangeMe!Admin123"
@@ -82,6 +100,18 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"production", "prod"}
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Whether to mark the refresh cookie Secure.
+
+        Forced on in production. Locally it must be off, or the browser
+        discards the cookie over plain http and sign-in appears to work but
+        never survives a reload.
+        """
+        if self.refresh_cookie_secure is not None:
+            return self.refresh_cookie_secure
+        return self.is_production
 
     @property
     def jwt_secret_is_default(self) -> bool:
