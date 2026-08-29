@@ -21,6 +21,9 @@ from app.schemas.rag import EmbeddedChunk, KnowledgeChunk
 pytestmark = pytest.mark.integration
 
 QDRANT_URL = os.getenv("QDRANT_TEST_URL", "http://localhost:6333")
+#: Qdrant requires a key in every environment here, including development, so
+#: the authenticated path is the one these tests exercise.
+QDRANT_API_KEY = os.getenv("QDRANT_TEST_API_KEY", "dev-only-qdrant-key")
 DIMENSION = 8
 
 
@@ -28,7 +31,14 @@ def _server_available() -> bool:
     import httpx
 
     try:
-        return httpx.get(f"{QDRANT_URL}/readyz", timeout=2.0).status_code < 500
+        return (
+            httpx.get(
+                f"{QDRANT_URL}/readyz",
+                timeout=2.0,
+                headers={"api-key": QDRANT_API_KEY},
+            ).status_code
+            < 500
+        )
     except Exception:  # noqa: BLE001 - any failure means "no server"
         return False
 
@@ -45,6 +55,7 @@ def store_fixture():
     collection = f"itest_{uuid.uuid4().hex[:10]}"
     settings = Settings(
         qdrant_url=QDRANT_URL,
+        qdrant_api_key=QDRANT_API_KEY,
         qdrant_collection=collection,
         qdrant_report_collection=f"{collection}_reports",
         embedding_dimension=DIMENSION,

@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688)
 ![Qdrant](https://img.shields.io/badge/Qdrant-1.19-dc244c)
 ![Docker](https://img.shields.io/badge/docker-compose-2496ed)
-![Tests](https://img.shields.io/badge/tests-837%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-891%20passing-brightgreen)
 
 An AI-powered laboratory operations platform: report management, a
 retrieval-augmented knowledge assistant grounded in the lab's own
@@ -26,11 +26,16 @@ delay model on first start; nothing else is required.
 > informational only — not a medical diagnosis, and no regulatory claim
 > (HIPAA, FDA, clinical validation) is made or implied.
 
+![AI assistant answering a question with citations](docs/screenshots/assistant-answer.png)
+
+*A real answer from the running system: grounded in the lab's own documentation,
+streamed token by token, with every source and its similarity score.*
+
 ---
 
 ## Contents
 
-[Features](#features) · [Architecture](#architecture) ·
+[Features](#features) · [Screenshots](#screenshots) · [Architecture](#architecture) ·
 [Stack](#technology-stack) · [Quick start](#quick-start) ·
 [Environment](#environment-variables) · [Auth](#authentication) ·
 [RAG](#rag-architecture) · [ML](#ml-delay-prediction) ·
@@ -49,9 +54,9 @@ Report lifecycle, filtering and search, status management, dashboard metrics,
 branch and city breakdowns.
 
 **Knowledge assistant**
-Grounded answers over the lab's own SOPs, test guides and FAQs, with the
-sources every answer used. Refuses honestly when the knowledge base has no
-answer.
+Grounded answers over the lab's own SOPs, test guides and FAQs, **streamed
+token by token**, with the sources every answer used shown before the first
+word arrives. Refuses honestly when the knowledge base has no answer.
 
 **Report explanation**
 Explains what a report's test measures — behind a PII boundary that sends no
@@ -67,6 +72,35 @@ operations dashboard.
 **Platform**
 JWT auth with refresh rotation, four-role RBAC, append-only audit trail,
 Prometheus metrics, structured JSON logs with cross-service request tracing.
+
+---
+
+## Screenshots
+
+All captured from the running application, not mocked.
+Regenerate with `cd frontend && npm run screenshots`.
+
+### Operations dashboard
+![Dashboard](docs/screenshots/dashboard.png)
+
+### AI assistant
+![Assistant](docs/screenshots/assistant-empty.png)
+
+Answers stream as they are written. Grounding appears in **0.07 s**, the first
+token at 7.8 s, the full answer by 14 s — so almost none of the wait is silent.
+
+### Predicted delay risk
+![AI analytics](docs/screenshots/analytics.png)
+
+Every in-flight report scored for the risk of missing its turnaround target.
+Queue depth and urgent load come from live data; the model's learned branch
+effect shows through — the worst branches are the least-resourced ones.
+
+### Sign in
+![Login](docs/screenshots/login.png)
+
+Sessions are httpOnly cookies. Signed in, `localStorage`, `sessionStorage` and
+`document.cookie` are all empty.
 
 ---
 
@@ -124,7 +158,7 @@ jio-healthlab/
 │   │   ├── models/ schemas/ dependencies/ core/
 │   │   └── seed.py
 │   ├── alembic/versions/    3 migrations
-│   └── tests/               292 tests
+│   └── tests/               325 tests
 │
 ├── ai-service/              FastAPI: RAG, embeddings, LLM, ML
 │   ├── app/
@@ -137,10 +171,10 @@ jio-healthlab/
 │   │   └── bootstrap.py
 │   ├── knowledge/           14 original documents: lab_tests · sop · faq
 │   ├── evaluation/          43-question set + two evaluators
-│   └── tests/               472 tests
+│   └── tests/               491 tests
 │
 ├── frontend/                React SPA
-│   └── src/{pages,auth,api.ts,types.ts}      72 tests
+│   └── src/{pages,auth,api.ts,types.ts}      75 tests
 │
 ├── deploy/nginx/            production reverse proxy
 ├── docs/                    architecture · rag · ml · security · deployment
@@ -355,12 +389,12 @@ right chunk first. Both are documented in [docs/rag.md](docs/rag.md).
 ## Testing
 
 ```bash
-cd backend    && pytest                    # 292
-cd ai-service && pytest                    # 472 (+ 22 integration)
-cd frontend   && npm test                  # 72
+cd backend    && pytest                    # 325
+cd ai-service && pytest                    # 491 (+ 22 integration)
+cd frontend   && npm test                  # 75
 ```
 
-**837 tests.** Backend uses in-memory SQLite and mocks the AI service with
+**891 tests.** Backend uses in-memory SQLite and mocks the AI service with
 respx — no model, no Qdrant, no network. AI-service unit tests run *without*
 torch installed, which keeps CI fast and proves the graceful-degradation paths.
 Integration tests against a real Qdrant are marked and run separately.
