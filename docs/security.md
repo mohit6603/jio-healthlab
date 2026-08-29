@@ -222,7 +222,6 @@ Named rather than glossed over.
 | Secrets via environment | Visible to anything reading the process | AWS Secrets Manager with rotation |
 | Audit trail append-only by convention | A DB admin could edit history | Append-only storage or off-host shipping |
 | No per-user AI quota | One user could monopolise generation | Per-user token budget |
-| Qdrant unauthenticated | Full read/write to anything on the network | API key, enforced by network policy today |
 
 ---
 

@@ -43,6 +43,11 @@ services:
     environment:
       QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__TELEMETRY_DISABLED: "true"
+      # Qdrant is unauthenticated by default. Requiring a key even locally
+      # means the dev and production configurations differ only in the value,
+      # not in whether authentication exists at all -- so "it worked locally"
+      # cannot mean "we never tested the authenticated path".
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
     volumes:
       - qdrant-data:/qdrant/storage
     # Bound to loopback: the dashboard is useful locally, but Qdrant has no
@@ -51,7 +56,8 @@ services:
       - "127.0.0.1:6333:6333"
     healthcheck:
       # The image is distroless: no curl or wget, but its bash can open a TCP
-      # socket, which is enough to prove the service is listening.
+      # socket, which is enough to prove the service is listening -- and needs
+      # no API key, which an HTTP probe would.
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 10s
       timeout: 5s
@@ -78,6 +84,7 @@ services:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-healthlab_knowledge}
       QDRANT_REPORT_COLLECTION: ${QDRANT_REPORT_COLLECTION:-healthlab_reports}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -112,6 +119,7 @@ services:
       HF_HOME: /models/huggingface
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-healthlab_knowledge}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       # The bootstrap pre-downloads the generation model so the first user
       # question does not block for minutes behind a gigabyte download. It
