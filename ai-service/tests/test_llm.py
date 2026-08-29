@@ -350,3 +350,25 @@ def test_missing_transformers_reports_clearly(settings):
         LocalTransformerProvider(settings).warm_up()
 
     assert "transformers" in excinfo.value.message
+
+
+# ------------------------------------------------------- decoding defaults ---
+def test_greedy_decoding_is_the_default(settings):
+    """A grounded factual assistant should not vary run to run.
+
+    Regression guard: the default was 0.2, which made the same question
+    produce a different answer each time. That is creative variance the
+    product does not want, and it made the RAG evaluation unreproducible --
+    one unlucky sample looked like a model failure.
+    """
+    assert settings.llm_temperature == 0.0
+
+
+def test_zero_temperature_disables_sampling(local_provider, fake_transformers):
+    """Temperature 0 must reach the model as greedy, not as sampling at 0."""
+    local_provider.generate("question")
+
+    kwargs = fake_transformers.generate_kwargs
+    assert kwargs["do_sample"] is False
+    assert "temperature" not in kwargs
+    assert "top_p" not in kwargs

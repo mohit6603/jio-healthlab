@@ -52,7 +52,12 @@ class Settings(BaseSettings):
     #: is available.
     llm_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
     llm_max_new_tokens: int = 256
-    llm_temperature: float = 0.2
+    #: Greedy decoding. A grounded factual assistant should give the same
+    #: answer to the same question; sampling makes answers vary run to run,
+    #: which is creative variance this product does not want and which makes
+    #: the evaluation unreproducible -- one unlucky sample looks like a model
+    #: failure. Raise it only to explore behaviour.
+    llm_temperature: float = 0.0
     llm_top_p: float = 0.9
     llm_device: str = "cpu"
     #: Wall-clock budget for one generation. CPU inference on a 1.5B model runs
