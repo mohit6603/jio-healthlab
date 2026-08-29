@@ -1,34 +1,163 @@
+# JIO HealthLab -- local development stack.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# First start downloads the embedding model (~90 MB) and the generation model
+# (~1 GB) into the huggingface-cache volume, then ingests the knowledge base
+# and trains the delay model. Subsequent starts reuse all three.
+#
+# Production differences live in docker-compose.prod.yml.
+
 services:
+  # ── Data stores ────────────────────────────────────────────────
   mysql:
     image: mysql:8.4
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: jio_healthlab
-      MYSQL_USER: healthlab
-      MYSQL_PASSWORD: healthlab
-      MYSQL_ROOT_PASSWORD: healthlab-root
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-jio_healthlab}
+      MYSQL_USER: ${MYSQL_USER:-healthlab}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-healthlab}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-healthlab-root}
+    # Development convenience only; the production compose does not publish it.
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uhealthlab -phealthlab || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -u$$MYSQL_USER -p$$MYSQL_PASSWORD || exit 1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
+
+  qdrant:
+    # Pinned to match the qdrant-client major/minor in ai-service/requirements.txt;
+    # the client warns loudly when the versions drift apart.
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__TELEMETRY_DISABLED: "true"
+      # Qdrant is unauthenticated by default. Requiring a key even locally
+      # means the dev and production configurations differ only in the value,
+      # not in whether authentication exists at all -- so "it worked locally"
+      # cannot mean "we never tested the authenticated path".
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
+    volumes:
+      - qdrant-data:/qdrant/storage
+    # Bound to loopback: the dashboard is useful locally, but Qdrant has no
+    # authentication in this configuration and must not be reachable off-host.
+    ports:
+      - "127.0.0.1:6333:6333"
+    healthcheck:
+      # The image is distroless: no curl or wget, but its bash can open a TCP
+      # socket, which is enough to prove the service is listening -- and needs
+      # no API key, which an HTTP probe would.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── Services ───────────────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AI_SERVICE_PORT: 8001
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      # Must be instruction-tuned; see .env.example for measured throughput.
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
+      HF_HOME: /models/huggingface
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-healthlab_knowledge}
+      QDRANT_REPORT_COLLECTION: ${QDRANT_REPORT_COLLECTION:-healthlab_reports}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    volumes:
+      # Model weights: downloaded once, reused across rebuilds. Never baked
+      # into the image and never committed.
+      - huggingface-cache:/models/huggingface
+      # Trained ML artifacts. Without this a `up --build` silently discards the
+      # delay model and every prediction endpoint returns ML_MODEL_NOT_TRAINED.
+      - model-artifacts:/app/app/ml/artifacts
+    # Published so /docs is reachable during development. The production
+    # compose keeps this service on the internal network only.
+    ports:
+      - "127.0.0.1:8001:8001"
+
+  # One-shot. Ingests the knowledge base and trains the delay model, but only
+  # when each is missing, so it is cheap on every subsequent `up`.
+  bootstrap:
+    build:
+      context: ./ai-service
+    restart: "no"
+    command: ["python", "-m", "app.bootstrap"]
+    # A one-shot job must not inherit the image's server healthcheck: there is
+    # no HTTP listener here, so it would be reported unhealthy while working.
+    healthcheck:
+      disable: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HF_HOME: /models/huggingface
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-healthlab_knowledge}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-only-qdrant-key}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      # The bootstrap pre-downloads the generation model so the first user
+      # question does not block for minutes behind a gigabyte download. It
+      # never generates text -- only fetches and loads the weights.
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
+    depends_on:
+      ai-service:
+        condition: service_healthy
+    volumes:
+      - huggingface-cache:/models/huggingface
+      - model-artifacts:/app/app/ml/artifacts
 
   api:
     build:
       context: ./backend
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
+      APP_NAME: ${APP_NAME:-JIO HealthLab}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://healthlab:healthlab@mysql:3306/jio_healthlab}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost,http://localhost:5173,http://127.0.0.1:5173}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-14}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-ChangeMe!Admin123}
     depends_on:
       mysql:
         condition: service_healthy
+      # Deliberately NOT dependent on ai-service. The reports system must
+      # start and serve while AI is down; see docs/architecture.md.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   web:
     build:
@@ -37,9 +166,13 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
-      - "80:80"
+      - "80:8080"
 
 volumes:
   mysql-data:
+  qdrant-data:
+  huggingface-cache:
+  model-artifacts:

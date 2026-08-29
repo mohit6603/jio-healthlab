@@ -1,45 +1,8 @@
-from sqlalchemy import create_engine
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
-
-from app.database import Base, get_db
-from app.main import app
+"""End-to-end report lifecycle test (preserved from the original suite)."""
 
 
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-Base.metadata.create_all(bind=engine)
-
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
-
-
-def test_create_list_update_dashboard_and_delete_report():
-    payload = {
-        "patient_name": "Asha Nair",
-        "age": 34,
-        "test_type": "CBC Panel",
-        "city": "Mumbai",
-        "lab_branch": "BKC Flagship",
-        "status": "registered",
-        "priority": "urgent",
-    }
-
-    created = client.post("/api/reports", json=payload)
+def test_create_list_update_dashboard_and_delete_report(client, report_payload):
+    created = client.post("/api/reports", json=report_payload)
     assert created.status_code == 201
     report = created.json()
     assert report["id"]

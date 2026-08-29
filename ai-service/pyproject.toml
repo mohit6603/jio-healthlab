@@ -1,0 +1,42 @@
+[project]
+name = "jio-healthlab-ai-service"
+version = "1.0.0"
+description = "RAG, embeddings and predictive ML for JIO HealthLab"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: requires a live Qdrant or real model weights (deselect with -m 'not integration')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated.*",
+    # joblib unpickling against numpy 2.5; not our call site.
+    "ignore:Setting the shape on a NumPy array has been deprecated.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+# BLE flags blind `except Exception`; the vector store and model loaders
+# catch broadly on purpose and mark each site with an explanatory noqa.
+select = ["E", "W", "F", "I", "B", "BLE", "UP", "C4", "SIM", "RUF"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+exclude = [".venv/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
