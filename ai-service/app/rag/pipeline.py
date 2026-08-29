@@ -21,6 +21,7 @@ Two behaviours are structural rather than left to the model:
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from ..config import Settings, get_settings
@@ -56,6 +57,28 @@ _REFUSAL_MARKERS = (
     "can't answer",
     "unable to answer",
 )
+
+
+@dataclass(slots=True)
+class StreamEvent:
+    """One event in a streamed answer.
+
+    ``sources`` arrives first, then ``token`` events, then exactly one
+    ``done``. A ``replace`` event means the safety screen rejected the
+    completed text: the client must discard what it rendered.
+    """
+
+    type: str
+    text: str = ""
+    hits: list[SearchHit] = field(default_factory=list)
+    grounded: bool = True
+    finish_reason: str = "stop"
+    model: str = ""
+    provider: str = ""
+    retrieval_ms: float = 0.0
+    retrieval_count: int = 0
+    total_ms: float = 0.0
+    drop_sources: bool = False
 
 
 @dataclass(slots=True)
@@ -135,6 +158,99 @@ class RagPipeline:
             retrieval_ms=retrieval.total_ms,
             started=started,
             max_new_tokens=max_new_tokens,
+        )
+
+    # ----------------------------------------------------------- streaming ---
+    def stream_answer(
+        self,
+        question: str,
+        *,
+        top_k: int | None = None,
+        score_threshold: float | None = None,
+        category: str | None = None,
+        max_new_tokens: int | None = None,
+    ) -> Iterator[StreamEvent]:
+        """Answer incrementally, as a sequence of typed events.
+
+        Sources are emitted *before* the first token, so the UI can show what
+        the answer is grounded in while it is still being written. The refusal
+        paths emit a single token event and stop -- they never reach the model,
+        exactly as in the non-streaming path.
+        """
+        started = time.perf_counter()
+
+        if requests_clinical_advice(question):
+            logger.info("rag_clinical_boundary", extra={"reason": "stream"})
+            yield StreamEvent("token", text=CLINICAL_BOUNDARY_MESSAGE)
+            yield self._done_event(started, grounded=False, reason="clinical_boundary")
+            return
+
+        retrieval = self._retriever.retrieve(
+            question,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            filters={"category": category} if category else None,
+        )
+
+        if retrieval.is_empty:
+            logger.info("rag_no_context", extra={"generation_skipped": True})
+            yield StreamEvent("token", text=INSUFFICIENT_CONTEXT_MESSAGE)
+            yield self._done_event(started, grounded=False, reason="no_context")
+            return
+
+        yield StreamEvent("sources", hits=retrieval.hits)
+
+        prompt = build_answer_prompt(retrieval.query, retrieval.hits)
+        collected: list[str] = []
+
+        for chunk in self._provider.stream(
+            prompt, system=SYSTEM_PROMPT, max_new_tokens=max_new_tokens
+        ):
+            collected.append(chunk)
+            yield StreamEvent("token", text=chunk)
+
+        answer = "".join(collected).strip()
+
+        # The safety screen can only run on the finished text. If it fires, the
+        # UI is told to discard what it has rendered and show the redirect
+        # instead -- which is why the event carries `replace`.
+        if answer and contains_clinical_advice(answer):
+            logger.warning("clinical_advice_suppressed", extra={"streamed": True})
+            yield StreamEvent("replace", text=CLINICAL_BOUNDARY_MESSAGE)
+            yield self._done_event(
+                started, grounded=False, reason="clinical_boundary", drop_sources=True
+            )
+            return
+
+        grounded = bool(answer) and not looks_like_refusal(answer)
+        yield self._done_event(
+            started,
+            grounded=grounded,
+            reason="stop",
+            retrieval_ms=retrieval.total_ms,
+            retrieval_count=len(retrieval.hits),
+        )
+
+    def _done_event(
+        self,
+        started: float,
+        *,
+        grounded: bool,
+        reason: str,
+        retrieval_ms: float = 0.0,
+        retrieval_count: int = 0,
+        drop_sources: bool = False,
+    ) -> StreamEvent:
+        return StreamEvent(
+            "done",
+            grounded=grounded,
+            finish_reason=reason,
+            model=self._provider.model_name,
+            provider=self._provider.name,
+            retrieval_ms=retrieval_ms,
+            retrieval_count=retrieval_count,
+            total_ms=round((time.perf_counter() - started) * 1000, 2),
+            drop_sources=drop_sources,
         )
 
     # ------------------------------------------------------------- explain ---

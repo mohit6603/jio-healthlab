@@ -134,7 +134,14 @@ export interface ChatMessage {
   answer?: ChatResponse;
   /** Present on assistant turns that failed. */
   error?: ApiErrorShape;
+  /** True before the first token arrives. */
   pending?: boolean;
+  /** True while tokens are still arriving. */
+  streaming?: boolean;
+  /** Arrives before the first token, so grounding can be shown early. */
+  sources?: Citation[];
+  /** The safety screen replaced the answer after generation. */
+  suppressed?: boolean;
 }
 
 export interface ApiErrorShape {

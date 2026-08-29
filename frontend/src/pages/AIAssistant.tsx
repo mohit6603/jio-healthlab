@@ -11,7 +11,8 @@ import {
   Trash2,
   UserRound
 } from "lucide-react";
-import { ApiError, askAssistant } from "../api";
+import { streamAssistant } from "../api";
+import type { StreamSummary } from "../api";
 import type { ApiErrorShape, ChatMessage, ChatResponse, Citation } from "../types";
 
 const SAMPLE_PROMPTS = [
@@ -22,14 +23,13 @@ const SAMPLE_PROMPTS = [
 ];
 
 /**
- * Guidance shown while waiting. Generation runs on CPU at a few tokens per
- * second, so a bare spinner leaves the user wondering whether it has hung.
+ * Shown only until the first token arrives. Once text is streaming, the answer
+ * itself is the progress indicator.
  */
 const WAITING_STAGES = [
   "Searching the knowledge base…",
   "Reading the retrieved sections…",
-  "Composing a grounded answer…",
-  "Still working — CPU generation takes a few seconds…"
+  "Composing a grounded answer…"
 ];
 
 function newId() {
@@ -41,6 +41,10 @@ function AIAssistant() {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<(() => void) | null>(null);
+
+  // Cancel an in-flight stream if the user navigates away mid-answer.
+  useEffect(() => () => abortRef.current?.(), []);
 
   useEffect(() => {
     threadRef.current?.scrollTo({
@@ -49,7 +53,7 @@ function AIAssistant() {
     });
   }, [messages]);
 
-  async function ask(text: string) {
+  function ask(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
 
@@ -57,35 +61,53 @@ function AIAssistant() {
     setMessages((current) => [
       ...current,
       { id: newId(), role: "user", text: trimmed },
-      { id: pendingId, role: "assistant", text: "", pending: true }
+      { id: pendingId, role: "assistant", text: "", pending: true, streaming: true }
     ]);
     setQuestion("");
     setBusy(true);
 
-    try {
-      const answer = await askAssistant(trimmed);
+    const patch = (updater: (message: ChatMessage) => ChatMessage) =>
       setMessages((current) =>
-        current.map((message) =>
-          message.id === pendingId
-            ? { ...message, pending: false, text: answer.answer, answer }
-            : message
-        )
+        current.map((message) => (message.id === pendingId ? updater(message) : message))
       );
-    } catch (caught) {
-      const error: ApiErrorShape =
-        caught instanceof ApiError
-          ? caught.toShape()
-          : { code: "UNKNOWN_ERROR", message: "Something went wrong." };
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === pendingId
-            ? { ...message, pending: false, text: "", error }
-            : message
-        )
-      );
-    } finally {
-      setBusy(false);
-    }
+
+    abortRef.current = streamAssistant(trimmed, {
+      // Sources land before the first token, so the user can see what the
+      // answer is being built from while it is still being written.
+      onSources: (sources) => patch((m) => ({ ...m, sources })),
+
+      onToken: (chunk) =>
+        patch((m) => ({ ...m, pending: false, text: m.text + chunk })),
+
+      // The safety screen rejected the finished answer; replace what was shown.
+      onReplace: (replacement) =>
+        patch((m) => ({ ...m, text: replacement, sources: [], suppressed: true })),
+
+      onDone: (summary: StreamSummary) => {
+        patch((m) => ({
+          ...m,
+          pending: false,
+          streaming: false,
+          answer: {
+            answer: m.text,
+            sources: summary.drop_sources ? [] : (m.sources ?? []),
+            retrieval_count: summary.retrieval_count,
+            grounded: summary.grounded,
+            disclaimer: summary.disclaimer,
+            model: summary.model,
+            provider: summary.provider,
+            finish_reason: summary.finish_reason,
+            timings: summary.timings
+          }
+        }));
+        setBusy(false);
+      },
+
+      onError: (error: ApiErrorShape) => {
+        patch((m) => ({ ...m, pending: false, streaming: false, text: "", error }));
+        setBusy(false);
+      }
+    });
   }
 
   function handleSubmit(event: FormEvent) {
@@ -199,7 +221,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div className="bubble-body">
         {message.pending && <PendingIndicator />}
         {message.error && <ErrorNotice error={message.error} />}
-        {!message.pending && !message.error && message.answer && (
+        {/* While streaming, render the partial text with a caret; once the
+            done event lands, render the full answer with citations. */}
+        {!message.pending && !message.error && message.streaming && (
+          <StreamingBody text={message.text} sources={message.sources ?? []} />
+        )}
+        {!message.pending && !message.error && !message.streaming && message.answer && (
           <AnswerBody answer={message.answer} />
         )}
       </div>
@@ -250,6 +277,28 @@ function ErrorNotice({ error }: { error: ApiErrorShape }) {
         <span className="assistant-error-code">{error.code}</span>
       </div>
     </div>
+  );
+}
+
+function StreamingBody({
+  text,
+  sources
+}: {
+  text: string;
+  sources: Citation[];
+}) {
+  return (
+    <>
+      {sources.length > 0 && (
+        <div className="streaming-sources">
+          Grounding in {sources.length} source{sources.length === 1 ? "" : "s"}…
+        </div>
+      )}
+      <p className="answer-text">
+        {text}
+        <span className="caret" aria-hidden="true" />
+      </p>
+    </>
   );
 }
 

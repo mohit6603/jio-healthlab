@@ -9,6 +9,7 @@ retrieval or the pipeline.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from ..core.errors import GenerationDisabledError
@@ -62,6 +63,32 @@ class LLMProvider(ABC):
         temperature: float | None = None,
     ) -> GenerationResult:
         """Generate a completion for ``prompt``."""
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_new_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """Yield the completion incrementally.
+
+        The default falls back to generating in full and yielding once, so a
+        provider without native streaming still satisfies the interface -- the
+        caller sees one large chunk rather than an error.
+        """
+        yield self.generate(
+            prompt,
+            system=system,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        ).text
+
+    @property
+    def supports_streaming(self) -> bool:
+        """Whether :meth:`stream` yields incrementally rather than at once."""
+        return False
 
     # Optional hooks: a no-op default is correct for providers with no
     # local state (a hosted API has nothing to warm up or release).

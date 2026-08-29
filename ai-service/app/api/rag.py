@@ -7,11 +7,16 @@ model is available.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import json
+from collections.abc import Iterator
 
-from ..core.errors import ERROR_RESPONSES
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+
+from ..core.errors import ERROR_RESPONSES, AIError
 from ..rag.pipeline import RagAnswer, RagPipeline
-from ..rag.retriever import Retriever, build_filters
+from ..rag.prompts import AI_DISCLAIMER
+from ..rag.retriever import Retriever, build_filters, normalise_query
 from ..schemas.rag import (
     AnswerTimings,
     Citation,
@@ -163,3 +168,105 @@ def explain(
         max_new_tokens=payload.max_new_tokens,
     )
     return to_query_response(result)
+
+
+def _sse(event: str, payload: dict) -> str:
+    """Render one Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@router.post(
+    "/query/stream",
+    summary="Ask a grounded question, streamed",
+    description=(
+        "Same pipeline as `POST /rag/query`, delivered as Server-Sent Events "
+        "so the answer appears as it is written rather than after 10-30 "
+        "seconds of silence.\n\n"
+        "**Event order** — `sources` first, so the UI can show what the answer "
+        "is grounded in while it is still being written; then `token` events; "
+        "then exactly one `done`.\n\n"
+        "A `replace` event means the safety screen rejected the completed "
+        "text: the client must discard what it has rendered and show the "
+        "replacement instead. That check can only run on the finished answer, "
+        "which is the one cost of streaming.\n\n"
+        "An `error` event carries the same codes as the non-streaming "
+        "endpoint. Errors arrive as events rather than status codes because "
+        "the response has already begun."
+    ),
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+def query_stream(
+    payload: QueryRequest,
+    settings: SettingsDep,
+    store: VectorStoreDep,
+    embedder: EmbedderDep,
+    provider: LLMProviderDep,
+) -> StreamingResponse:
+    # Validate before the response begins. Once streaming starts the status
+    # code is fixed at 200, so a bad request could only be reported as an
+    # event -- which clients would have to special-case. Fail normally here.
+    question = normalise_query(payload.question)
+
+    pipeline = RagPipeline(Retriever(embedder, store, settings), provider, settings)
+
+    def events() -> Iterator[str]:
+        try:
+            for event in pipeline.stream_answer(
+                question,
+                top_k=payload.top_k,
+                score_threshold=payload.score_threshold,
+                category=payload.category,
+                max_new_tokens=payload.max_new_tokens,
+            ):
+                if event.type == "sources":
+                    yield _sse(
+                        "sources",
+                        {
+                            "sources": [
+                                Citation(
+                                    title=hit.title,
+                                    source=hit.source,
+                                    chunk_id=hit.chunk_id,
+                                    score=hit.score,
+                                    section=hit.section,
+                                    category=hit.category,
+                                ).model_dump()
+                                for hit in event.hits
+                            ]
+                        },
+                    )
+                elif event.type in {"token", "replace"}:
+                    yield _sse(event.type, {"text": event.text})
+                elif event.type == "done":
+                    yield _sse(
+                        "done",
+                        {
+                            "grounded": event.grounded,
+                            "finish_reason": event.finish_reason,
+                            "model": event.model,
+                            "provider": event.provider,
+                            "retrieval_count": event.retrieval_count,
+                            "drop_sources": event.drop_sources,
+                            "disclaimer": AI_DISCLAIMER,
+                            "timings": {
+                                "retrieval_ms": event.retrieval_ms,
+                                "generation_ms": 0.0,
+                                "total_ms": event.total_ms,
+                            },
+                        },
+                    )
+        except AIError as exc:
+            # The response has already started, so a status code is no longer
+            # available; the client reads the code from the event instead.
+            yield _sse("error", {"code": exc.code, "message": exc.message})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Tells nginx not to buffer, which would defeat streaming entirely.
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -17,6 +17,7 @@ distinctions are made upstream.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -210,6 +211,49 @@ class AIServiceClient:
             "/rag/search",
             json=_compact({"query": query, "top_k": top_k, "category": category}),
         )
+
+    async def stream_chat(
+        self,
+        question: str,
+        *,
+        top_k: int | None = None,
+        category: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Proxy the AI service's SSE stream.
+
+        Yields raw frames so the browser receives tokens as the model produces
+        them. Buffering anywhere in this chain would defeat the point, so the
+        response is streamed rather than accumulated.
+        """
+        headers = {"Accept": "text/event-stream"}
+        if request_id := get_request_id():
+            headers[REQUEST_ID_HEADER] = request_id
+
+        payload = _compact(
+            {"question": question, "top_k": top_k, "category": category}
+        )
+
+        try:
+            async with self._get_client().stream(
+                "POST",
+                "/rag/query/stream",
+                json=payload,
+                headers=headers,
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    raise self._translate_error(response)
+
+                async for chunk in response.aiter_raw():
+                    yield chunk
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            logger.warning("ai_service_unreachable", extra={"path": "/rag/query/stream"})
+            raise AIServiceUnavailableError(
+                "The AI assistant is currently unavailable. Reports and the "
+                "dashboard are unaffected."
+            ) from exc
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+            raise AIServiceTimeoutError() from exc
 
     async def predict_delay_batch(
         self, items: list[dict[str, Any]]

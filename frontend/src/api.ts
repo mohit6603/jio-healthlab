@@ -3,6 +3,7 @@ import type {
   AISearchResponse,
   ApiErrorShape,
   ChatResponse,
+  Citation,
   DashboardSummary,
   MeResponse,
   Report,
@@ -323,4 +324,138 @@ export function logout(refreshToken: string | null) {
     method: "POST",
     body: JSON.stringify({ refresh_token: refreshToken })
   });
+}
+
+/* ── Streaming assistant ──────────────────────────────────────── */
+
+export interface StreamHandlers {
+  onSources?: (sources: Citation[]) => void;
+  onToken?: (text: string) => void;
+  /** The safety screen rejected the finished answer; discard what was shown. */
+  onReplace?: (text: string) => void;
+  onDone?: (summary: StreamSummary) => void;
+  onError?: (error: ApiErrorShape) => void;
+}
+
+export interface StreamSummary {
+  grounded: boolean;
+  finish_reason: string;
+  model: string;
+  provider: string;
+  retrieval_count: number;
+  drop_sources: boolean;
+  disclaimer: string;
+  timings: { retrieval_ms: number; generation_ms: number; total_ms: number };
+}
+
+/**
+ * Ask the assistant over Server-Sent Events.
+ *
+ * `fetch` with a reader rather than `EventSource`, because EventSource cannot
+ * send a POST body or an Authorization header. Returns an abort function so a
+ * component can cancel on unmount.
+ */
+export function streamAssistant(
+  question: string,
+  handlers: StreamHandlers,
+  options: ChatOptions = {}
+): () => void {
+  const controller = new AbortController();
+
+  void (async () => {
+    let response: Response;
+    try {
+      response = await send("/api/ai/chat/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          question,
+          top_k: options.topK ?? null,
+          category: options.category ?? null
+        }),
+        headers: { Accept: "text/event-stream" },
+        signal: controller.signal
+      });
+    } catch (caught) {
+      if (!controller.signal.aborted) {
+        handlers.onError?.(
+          caught instanceof ApiError
+            ? caught.toShape()
+            : { code: "NETWORK_ERROR", message: "Could not reach the server." }
+        );
+      }
+      return;
+    }
+
+    // A 401 here cannot be retried transparently mid-stream, so surface it.
+    if (!response.ok || !response.body) {
+      handlers.onError?.((await parseError(response)).toShape());
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Frames are separated by a blank line; a partial frame stays in the
+        // buffer until the rest arrives.
+        let split: number;
+        while ((split = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          dispatch(frame, handlers);
+        }
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        handlers.onError?.({
+          code: "STREAM_INTERRUPTED",
+          message: "The connection dropped before the answer finished."
+        });
+      }
+    }
+  })();
+
+  return () => controller.abort();
+}
+
+function dispatch(frame: string, handlers: StreamHandlers) {
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (dataLines.length === 0) return;
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(dataLines.join("\n"));
+  } catch {
+    return; // A malformed frame is skipped rather than killing the stream.
+  }
+
+  switch (event) {
+    case "sources":
+      handlers.onSources?.((payload as { sources: Citation[] }).sources);
+      break;
+    case "token":
+      handlers.onToken?.((payload as { text: string }).text);
+      break;
+    case "replace":
+      handlers.onReplace?.((payload as { text: string }).text);
+      break;
+    case "done":
+      handlers.onDone?.(payload as StreamSummary);
+      break;
+    case "error":
+      handlers.onError?.(payload as ApiErrorShape);
+      break;
+  }
 }

@@ -8,11 +8,14 @@ already knows how to handle.
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from ..core.errors import ERROR_RESPONSES, AppError
 from ..dependencies import CurrentUser, DbSession, Requires
@@ -93,6 +96,56 @@ async def chat(
         model=result.get("model"),
     )
     return ChatResponse(**result)
+
+
+@router.post(
+    "/chat/stream",
+    dependencies=[Requires(Permission.AI_CHAT)],
+    summary="Ask the assistant, streamed",
+    description=(
+        "Same answer as `POST /api/ai/chat`, delivered as Server-Sent Events "
+        "so text appears as it is written instead of after 10-30 seconds of "
+        "silence. Generation on CPU is slow; this makes the wait legible "
+        "rather than shorter.\n\n"
+        "Events: `sources` (before the first token, so the UI can show what "
+        "the answer is grounded in), then `token`, then one `done`. A "
+        "`replace` event means the safety screen rejected the finished text "
+        "and the client must discard what it rendered. An `error` event "
+        "carries the usual codes -- the response has already started, so a "
+        "status code is no longer available."
+    ),
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def chat_stream(
+    payload: ChatRequest,
+    client: AIClientDep,
+    db: DbSession,
+    user: CurrentUser,
+) -> StreamingResponse:
+    started = time.perf_counter()
+
+    async def events() -> AsyncIterator[bytes]:
+        error_code: str | None = None
+        try:
+            async for chunk in client.stream_chat(
+                payload.question, top_k=payload.top_k, category=payload.category
+            ):
+                yield chunk
+        except AppError as exc:
+            error_code = exc.code
+            frame = json.dumps({"code": exc.code, "message": exc.message})
+            yield f"event: error\ndata: {frame}\n\n".encode()
+        finally:
+            # Logged in `finally` so a disconnected client still leaves a
+            # record; the question itself is never stored.
+            _log_ai(db, QueryType.CHAT, user, started, error_code=error_code)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post(

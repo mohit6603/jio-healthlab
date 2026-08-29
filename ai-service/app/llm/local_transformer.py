@@ -15,7 +15,9 @@ Built for CPU inference, which shapes three decisions:
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from ..config import Settings, get_settings
@@ -208,6 +210,100 @@ class LocalTransformerProvider(LLMProvider):
             completion_tokens=completion_tokens,
             finish_reason=finish_reason,
             prompt_truncated=truncated,
+        )
+
+    # ---------------------------------------------------------- streaming ---
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_new_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """Yield text as the model produces it.
+
+        Generation runs on a worker thread while this generator drains the
+        streamer, because ``model.generate`` blocks until it is finished.
+        Without that, "streaming" would mean waiting for the whole answer and
+        then emitting it in pieces, which is exactly the latency this exists to
+        hide.
+        """
+        import torch
+        from transformers import TextIteratorStreamer
+
+        tokenizer, model = self._load()
+        settings = self._settings
+        limit = max_new_tokens or settings.llm_max_new_tokens
+        temp = settings.llm_temperature if temperature is None else temperature
+
+        text = self._render_chat(tokenizer, prompt, system)
+        inputs, _ = self._encode(tokenizer, text, limit)
+
+        streamer = TextIteratorStreamer(
+            tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
+        stopper = _TimeBudget(settings.llm_timeout_seconds)
+
+        generate_kwargs: dict[str, Any] = {
+            **inputs,
+            "max_new_tokens": limit,
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+            "stopping_criteria": stopper.as_list(),
+            "streamer": streamer,
+        }
+        if temp and temp > 0:
+            generate_kwargs.update(
+                do_sample=True, temperature=temp, top_p=settings.llm_top_p
+            )
+        else:
+            generate_kwargs["do_sample"] = False
+
+        error: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                with torch.inference_mode():
+                    model.generate(**generate_kwargs)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+                error.append(exc)
+            finally:
+                # Without this the consumer blocks forever when generate fails.
+                streamer.end()
+
+        started = time.perf_counter()
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+
+        produced = 0
+        for chunk in streamer:
+            if chunk:
+                produced += 1
+                yield chunk
+
+        worker.join(timeout=5.0)
+
+        if error:
+            logger.error("streaming_generation_failed", extra={"model": settings.llm_model})
+            raise ModelUnavailableError(
+                "Text generation failed.",
+                code="GENERATION_FAILED",
+                details={"reason": f"{type(error[0]).__name__}: {error[0]}"},
+            ) from error[0]
+
+        logger.info(
+            "generation_streamed",
+            extra={
+                "model": settings.llm_model,
+                "chunks": produced,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                "finish_reason": "timeout" if stopper.expired else "stop",
+            },
         )
 
     # ------------------------------------------------------------ helpers ---
