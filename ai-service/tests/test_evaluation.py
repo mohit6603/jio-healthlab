@@ -315,3 +315,30 @@ def test_evaluation_results_serialise_to_json():
     }
 
     assert json.loads(json.dumps(payload))
+
+
+# ------------------------------------------------- spelling variants -------
+def test_american_spelling_counts_as_a_match():
+    """A miss caused by orthography measures spelling, not faithfulness."""
+    from evaluation.dataset import keyword_matches
+
+    assert keyword_matches("haemoglobin", "a decrease in hemoglobin levels")
+    assert keyword_matches("anaemia", "the patient has anemia")
+
+
+def test_exact_spelling_still_matches():
+    from evaluation.dataset import keyword_matches
+
+    assert keyword_matches("haemoglobin", "haemoglobin is low")
+
+
+def test_an_unrelated_word_does_not_match():
+    from evaluation.dataset import keyword_matches
+
+    assert keyword_matches("haemoglobin", "platelets and white cells") is False
+
+
+def test_variants_only_apply_to_listed_words():
+    from evaluation.dataset import keyword_matches
+
+    assert keyword_matches("platelets", "plateletes") is False

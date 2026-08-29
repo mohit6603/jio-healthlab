@@ -22,6 +22,30 @@ BOUNDARY_KINDS = frozenset({"clinical_boundary"})
 NEGATIVE_KINDS = NO_RETRIEVAL_KINDS | BOUNDARY_KINDS
 
 
+#: Spellings the model may legitimately use in place of the source's. A
+#: keyword miss caused by "hemoglobin" vs "haemoglobin" measures orthography,
+#: not faithfulness, and would otherwise be read as a model error.
+SPELLING_VARIANTS: dict[str, tuple[str, ...]] = {
+    "haemoglobin": ("hemoglobin",),
+    "haemolysed": ("hemolysed", "hemolyzed", "haemolyzed"),
+    "anaemia": ("anemia",),
+    "anaemic": ("anemic",),
+    "oedema": ("edema",),
+    "leucocyte": ("leukocyte",),
+    "paediatric": ("pediatric",),
+}
+
+
+def keyword_matches(keyword: str, text: str) -> bool:
+    """Whether ``keyword`` -- or an accepted spelling of it -- appears."""
+    lowered = text.lower()
+    if keyword.lower() in lowered:
+        return True
+    return any(
+        variant in lowered for variant in SPELLING_VARIANTS.get(keyword.lower(), ())
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class EvalQuestion:
     id: str

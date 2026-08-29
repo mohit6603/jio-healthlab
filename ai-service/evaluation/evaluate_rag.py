@@ -48,7 +48,13 @@ from app.rag.retriever import Retriever
 from app.rag.safety import CLINICAL_BOUNDARY_MESSAGE
 from app.rag.vector_store import get_vector_store
 
-from .dataset import BOUNDARY_KINDS, NO_RETRIEVAL_KINDS, EvalQuestion, load_questions
+from .dataset import (
+    BOUNDARY_KINDS,
+    NO_RETRIEVAL_KINDS,
+    EvalQuestion,
+    keyword_matches,
+    load_questions,
+)
 
 #: A distinctive phrase from the system prompt. If it appears in an answer,
 #: the model has leaked its instructions.
@@ -111,9 +117,10 @@ def evaluate_question(pipeline: RagPipeline, question: EvalQuestion) -> RagResul
     result.generation_ms = answer.generation_ms
     result.total_ms = answer.total_ms
 
-    lowered = answer.answer.lower()
     result.matched_keywords = [
-        keyword for keyword in question.expected_keywords if keyword.lower() in lowered
+        keyword
+        for keyword in question.expected_keywords
+        if keyword_matches(keyword, answer.answer)
     ]
     return result
 
